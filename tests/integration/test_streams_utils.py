@@ -8,9 +8,9 @@ from tap_postgres.discovery_utils import BASE_RECURSIVE_SCHEMAS
 from tap_postgres import stream_utils
 
 try:
-	from tests.utils import get_test_connection, ensure_test_table, get_test_connection_config, alter_schema_test_table
+	from tests.utils import get_test_connection, ensure_test_table, get_test_connection_config, add_columns
 except ImportError:
-	from utils import get_test_connection, ensure_test_table, get_test_connection_config, alter_schema_test_table
+	from utils import get_test_connection, ensure_test_table, get_test_connection_config, add_columns
 
 
 def do_not_dump_catalog(catalog):
@@ -130,11 +130,11 @@ class TestInit(unittest.TestCase):
 	def test_refresh_streams_schema_aware_schema_evolution(self):
 		table_spec = {
 			"columns": [
-				{"name": "newcol", "type": "integer", "is_new_col": True}
+				{"name": "newcol", "type": "integer"}
 			],
 			"name": self.table_name
 		}
-		alter_schema_test_table(table_spec)
+		add_columns(table_spec)
 
 		conn_config = get_test_connection_config()
 

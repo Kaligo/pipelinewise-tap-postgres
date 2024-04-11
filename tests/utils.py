@@ -135,9 +135,9 @@ def ensure_test_table(table_spec, target_db='postgres'):
 def add_columns(table_spec, target_db='postgres'):
     with get_test_connection(target_db) as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
-            table = table_spec['name']
-            new_col, new_col_type = table_spec['columns']['name'], table_spec['columns']['type']
-            cur.execute("ALTER TABLE {} ADD {} {}".format(table, new_col, new_col_type))
+            table = quote_ident(table_spec['name'], cur)
+            for col_spec in table_spec['columns']:
+                cur.execute("ALTER TABLE {} ADD {} {}".format(table, col_spec['name'], col_spec['type']))
 
 def unselect_column(our_stream, col):
     md = metadata.to_map(our_stream['metadata'])

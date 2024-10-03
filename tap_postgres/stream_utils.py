@@ -89,7 +89,7 @@ def refresh_streams_schema(conn_config: Dict, streams: List[Dict]):
 
             for idx_met, metadatum in enumerate(discovered_stream['metadata']):
                 if not metadatum['breadcrumb']:
-                    meta.update(discovered_stream['metadata'][idx_met]['metadata'])
+                    meta.update(merge_stream_metadata(meta, discovered_stream['metadata'][idx_met]['metadata']))
                     discovered_stream['metadata'][idx_met]['metadata'] = meta
 
             # 2nd step: now copy all the metadata from the updated new discovery to the original stream
@@ -97,6 +97,16 @@ def refresh_streams_schema(conn_config: Dict, streams: List[Dict]):
 
     LOGGER.debug('Updated streams schemas %s', streams)
     LOGGER.info("The first stream is %s", streams)
+
+def merge_stream_metadata(metadata, discovered_metadata):
+    """
+    Merge metadata from the discovery with the existing metadata from the stream.
+    When the `merge_metadata` key is set to true in the metadata, the existing metadata is used.
+    """
+    if metadata.get('merge_metadata'):
+        return copy.deepcopy(metadata)
+    return copy.deepcopy(discovered_metadata)
+
 
 def merge_stream_schema(stream, discovered_stream):
     """

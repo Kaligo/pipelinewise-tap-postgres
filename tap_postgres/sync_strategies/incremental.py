@@ -129,7 +129,8 @@ def sync_table(conn_info, stream, state, desired_columns, md_map):
                                             })
                     LOGGER.info('select latest row statement: %s', latest_sql)
                     cur.execute(latest_sql)
-                    for rec in cur:
+                    rec = cur.fetchone()
+                    if rec:
                         LOGGER.info(f"The latest record of the table is: {rec}")
                         record_message = post_db.selected_row_to_singer_message(stream,
                                                                                 rec,

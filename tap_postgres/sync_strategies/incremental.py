@@ -119,9 +119,40 @@ def sync_table(conn_info, stream, state, desired_columns, md_map):
                         singer.write_message(singer.StateMessage(value=copy.deepcopy(state)))
 
                     counter.increment()
+                
+                if rows_saved == 0:
+                    latest_sql = _get_select_latest_sql({"escaped_columns": escaped_columns,
+                                              "replication_key": replication_key,
+                                              "schema_name": schema_name,
+                                              "table_name": stream['table_name'],
+                                            })
+                    LOGGER.info('select latest row statement: %s', latest_sql)
+                    cur.execute(select_sql)
+                    for rec in cur:
+                        record_message = post_db.selected_row_to_singer_message(stream,
+                                                                                rec,
+                                                                                stream_version,
+                                                                                desired_columns,
+                                                                                time_extracted,
+                                                                                md_map)
+                        singer.write_message(record_message)
 
     return state
 
+def _get_select_latest_sql(params):
+    escaped_columns = params['escaped_columns']
+    replication_key = post_db.prepare_columns_sql(params['replication_key'])
+    schema_name = params['schema_name']
+    table_name = params['table_name']
+    select_sql = f"""
+    SELECT {','.join(escaped_columns)}
+    FROM (
+        SELECT *
+        FROM {post_db.fully_qualified_table_name(schema_name, table_name)} 
+        ORDER BY {replication_key} DESC LIMIT 1
+    ) pg_speedup_trick;"""
+
+    return select_sql
 
 def _get_select_sql(params):
     escaped_columns = params['escaped_columns']

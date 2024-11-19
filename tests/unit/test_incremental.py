@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 import singer
 
-from tests.utils import MockedConnect
+from tests.utils import MockedConnect, MockedConnectWithZeroRowAtFirst
 
 from tap_postgres.sync_strategies import incremental
 
@@ -65,6 +65,20 @@ class TestIncremental(TestCase):
         self.assertEqual(expected_state_replication_key_value,
                          actual_state['bookmarks'][self.stream['tap_stream_id']]['replication_key_value'],
                          )
+    
+    @patch("psycopg2.extras.register_hstore")
+    def test_sync_table_always_return_1_row(self, mocked_register_hstore):
+        with patch('psycopg2.connect') as mocked_connect:
+            mocked_connect.return_value.__enter__.return_value = MockedConnectWithZeroRowAtFirst()
+            desired_columns = ['foo_key']
+            self.state['bookmarks'] = {}
+            expected_state_replication_key_value = MockedConnect.cursor.return_value
+            actual_state = incremental.sync_table(self.conn_config, self.stream, self.state, desired_columns, self.md_map)
+            mocked_register_hstore.assert_called()
+
+            self.assertEqual(expected_state_replication_key_value,
+                            actual_state['bookmarks'][self.stream['tap_stream_id']]['replication_key_value'],
+                            )
 
     @patch('tap_postgres.sync_strategies.incremental.post_db.hstore_available')
     @patch('psycopg2.extras.register_hstore')

@@ -154,11 +154,8 @@ def _get_select_latest_sql(params):
     table_name = params['table_name']
     select_sql = f"""
     SELECT {','.join(escaped_columns)}
-    FROM (
-        SELECT *
-        FROM {post_db.fully_qualified_table_name(schema_name, table_name)} 
-        ORDER BY {replication_key} DESC LIMIT 1
-    ) pg_speedup_trick;"""
+    FROM {post_db.fully_qualified_table_name(schema_name, table_name)} 
+    ORDER BY {replication_key} DESC LIMIT 1;"""
 
     return select_sql
 

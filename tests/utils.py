@@ -49,56 +49,7 @@ class MockedConnect:
 
     def __init__(self, *args, **kwargs):
         pass
-
-class MockedConnectWithZeroRowAtFirst:
-    class cursor:
-        return_value = 1234
-        counter_limit = 0
-        fetchone_return_value = [1234]
-
-        def __init__(self, *args, **kwargs):
-            self.counter = 0
-            self.latest_sql = """
-                SELECT "foo_key"
-                FROM (
-                    SELECT *
-                    FROM "pg_catalog"."pg_tbl"
-                    ORDER BY "foo_key" DESC LIMIT 1
-                ) pg_speedup_trick;"""
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args, **kwargs):
-            pass
-
-        def __iter__(self):
-            return self
-
-        def __next__(self):
-            self.counter += 1
-            if self.counter < self.counter_limit:
-                return [self.return_value]
-            raise StopIteration
-
-        def fetchone(self):
-            return self.fetchone_return_value
-
-        def execute(self, *args, **kwargs):
-            sql = args[0]
-            if sql == self.latest_sql:
-                self.counter_limit = 1
-
-    def __enter__(self):
-        pass
-
-    def __exit__(self, *args, **kwargs):
-        pass
-
-    def __init__(self, *args, **kwargs):
-        self.latest_sql = kwargs.get("latest_sql", "")
     
-
 def get_test_connection_config(target_db='postgres', use_secondary=False):
     try:
         conn_config = {'host': os.environ['TAP_POSTGRES_HOST'],

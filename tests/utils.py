@@ -49,7 +49,8 @@ class MockedConnect:
 
     def __init__(self, *args, **kwargs):
         pass
-    
+
+
 def get_test_connection_config(target_db='postgres', use_secondary=False):
     try:
         conn_config = {'host': os.environ['TAP_POSTGRES_HOST'],

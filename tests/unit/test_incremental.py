@@ -65,6 +65,21 @@ class TestIncremental(TestCase):
         self.assertEqual(expected_state_replication_key_value,
                          actual_state['bookmarks'][self.stream['tap_stream_id']]['replication_key_value'],
                          )
+    
+    @patch('psycopg2.extras.register_hstore')
+    def test_sync_table_return_1_row(self, mocked_register_hstore):
+        """Test for sync_table if it returns 1 row"""
+        desired_columns = ['foo_key']
+        self.state['bookmarks'] = {}
+        MockedConnect.cursor.counter_limit = 0
+        expected_state_replication_key_value = MockedConnect.cursor.fetchone_return_value[0]
+
+        actual_state = incremental.sync_table(self.conn_config, self.stream, self.state, desired_columns, self.md_map)
+        mocked_register_hstore.assert_called()
+
+        self.assertEqual(expected_state_replication_key_value,
+                         actual_state['bookmarks'][self.stream['tap_stream_id']]['replication_key_value'],
+                        )
 
     @patch('tap_postgres.sync_strategies.incremental.post_db.hstore_available')
     @patch('psycopg2.extras.register_hstore')

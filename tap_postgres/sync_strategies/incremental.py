@@ -48,7 +48,7 @@ def sync_table(conn_info, stream, state, desired_columns, md_map):
 
     schema_name = md_map.get(()).get('schema-name')
 
-    escaped_columns = map(partial(post_db.prepare_columns_for_select_sql, md_map=md_map), desired_columns)
+    escaped_columns = list(map(partial(post_db.prepare_columns_for_select_sql, md_map=md_map), desired_columns))
 
     activate_version_message = singer.ActivateVersionMessage(
         stream=post_db.calculate_destination_stream_name(stream, md_map),
@@ -119,9 +119,45 @@ def sync_table(conn_info, stream, state, desired_columns, md_map):
                         singer.write_message(singer.StateMessage(value=copy.deepcopy(state)))
 
                     counter.increment()
+                
+            with conn.cursor(cursor_factory=psycopg2.extras.DictCursor, name='pipelinewise') as cur:
+                if rows_saved == 0:
+                    latest_sql = _get_select_latest_sql({"escaped_columns": escaped_columns,
+                                              "replication_key": replication_key,
+                                              "schema_name": schema_name,
+                                              "table_name": stream['table_name'],
+                                            })
+                    LOGGER.info('select latest row statement: %s', latest_sql)
+                    cur.execute(latest_sql)
+                    rec = cur.fetchone()
+                    if rec:
+                        LOGGER.info(f"The latest record of the table is: {rec}")
+                        record_message = post_db.selected_row_to_singer_message(stream,
+                                                                                rec,
+                                                                                stream_version,
+                                                                                desired_columns,
+                                                                                time_extracted,
+                                                                                md_map)
+                        singer.write_message(record_message)
+                        if record_message.record[replication_key] is not None:
+                            state = singer.write_bookmark(state,
+                                                        stream['tap_stream_id'],
+                                                        'replication_key_value',
+                                                        record_message.record[replication_key])
 
     return state
 
+def _get_select_latest_sql(params):
+    escaped_columns = params['escaped_columns']
+    replication_key = post_db.prepare_columns_sql(params['replication_key'])
+    schema_name = params['schema_name']
+    table_name = params['table_name']
+    select_sql = f"""
+    SELECT {','.join(escaped_columns)}
+    FROM {post_db.fully_qualified_table_name(schema_name, table_name)} 
+    ORDER BY {replication_key} DESC LIMIT 1;"""
+
+    return select_sql
 
 def _get_select_sql(params):
     escaped_columns = params['escaped_columns']

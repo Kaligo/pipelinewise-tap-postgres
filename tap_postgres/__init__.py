@@ -76,7 +76,7 @@ def do_sync_incremental(conn_config, stream, state, desired_columns, md_map):
 
     stream_state = state.get('bookmarks', {}).get(stream['tap_stream_id'])
     illegal_bk_keys = set(stream_state.keys()).difference(
-        {'replication_key', 'replication_key_value', 'version', 'last_replication_method'})
+        {'replication_key', 'replication_key_value', 'version', 'last_replication_method', 'upper_bound'})
     if len(illegal_bk_keys) != 0:
         raise Exception(f"invalid keys found in state: {illegal_bk_keys}")
 

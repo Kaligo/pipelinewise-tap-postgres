@@ -58,6 +58,7 @@ def sync_table(conn_info, stream, state, desired_columns, md_map):
 
     replication_key = md_map.get((), {}).get('replication-key')
     replication_key_value = singer.get_bookmark(state, stream['tap_stream_id'], 'replication_key_value')
+    replication_key_value_upper_bound = singer.get_bookmark(state, stream['tap_stream_id'], 'upper_bound')
     replication_key_sql_datatype = md_map.get(('properties', replication_key)).get('sql-datatype')
 
     hstore_available = post_db.hstore_available(conn_info)
@@ -85,6 +86,7 @@ def sync_table(conn_info, stream, state, desired_columns, md_map):
                                               "replication_key": replication_key,
                                               "replication_key_sql_datatype": replication_key_sql_datatype,
                                               "replication_key_value": replication_key_value,
+                                              "replication_key_value_upper_bound": replication_key_value_upper_bound,
                                               "schema_name": schema_name,
                                               "table_name": stream['table_name'],
                                               "limit": conn_info['limit'],
@@ -164,6 +166,7 @@ def _get_select_sql(params):
     replication_key = post_db.prepare_columns_sql(params['replication_key'])
     replication_key_sql_datatype = params['replication_key_sql_datatype']
     replication_key_value = params['replication_key_value']
+    replication_key_value_upper_bound = params['replication_key_value_upper_bound']
     schema_name = params['schema_name']
     table_name = params['table_name']
 
@@ -175,8 +178,11 @@ def _get_select_sql(params):
     where_incr += f" - interval '{params['look_back_n_seconds']} seconds'" \
         if params["look_back_n_seconds"] and replication_key_sql_datatype.startswith("timestamp") and replication_key_value else ""
 
-    where_skip = f"{replication_key} <= NOW() - interval '{params['skip_last_n_seconds']} seconds'" \
-        if params["skip_last_n_seconds"] and replication_key_sql_datatype.startswith("timestamp") else ""
+    if replication_key_value_upper_bound:
+        where_skip = f"{replication_key} <= '{replication_key_value_upper_bound}'::{replication_key_sql_datatype}"
+    else:
+        where_skip = f"{replication_key} <= NOW() - interval '{params['skip_last_n_seconds']} seconds'" \
+            if params["skip_last_n_seconds"] and replication_key_sql_datatype.startswith("timestamp") else ""
 
     where_statement = f"WHERE {where_incr}{' AND ' if where_incr and where_skip else ''}{where_skip}" \
         if where_incr or where_skip else ""

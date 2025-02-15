@@ -146,6 +146,12 @@ def sync_table(conn_info, stream, state, desired_columns, md_map):
                                                         stream['tap_stream_id'],
                                                         'replication_key_value',
                                                         record_message.record[replication_key])
+    
+    # Reset upper_bound to None for the next run 
+    state = singer.write_bookmark(state,
+                                stream['tap_stream_id'],
+                                'upper_bound',
+                                None)
 
     return state
 

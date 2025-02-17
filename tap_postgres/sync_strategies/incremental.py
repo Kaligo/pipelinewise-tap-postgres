@@ -56,6 +56,10 @@ def sync_table(conn_info, stream, state, desired_columns, md_map):
 
     singer.write_message(activate_version_message)
 
+    if singer.get_bookmark(state, stream['tap_stream_id'], 'is_skip'):
+        LOGGER.info("Skipping the stream")
+        return state
+
     replication_key = md_map.get((), {}).get('replication-key')
     replication_key_value = singer.get_bookmark(state, stream['tap_stream_id'], 'replication_key_value')
     replication_key_value_upper_bound = singer.get_bookmark(state, stream['tap_stream_id'], 'upper_bound')
@@ -146,7 +150,7 @@ def sync_table(conn_info, stream, state, desired_columns, md_map):
                                                         stream['tap_stream_id'],
                                                         'replication_key_value',
                                                         record_message.record[replication_key])
-    
+
     return state
 
 def _get_select_latest_sql(params):

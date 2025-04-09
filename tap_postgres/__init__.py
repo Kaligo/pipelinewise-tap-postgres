@@ -311,7 +311,7 @@ def do_sync(conn_config, catalog, default_replication_method, state, state_file=
     for stream in traditional_streams:
         
         if conn_config["skip_streams_by_default"] and singer.get_bookmark(
-            state, stream["tap_stream_id"], "is_skipped", True
+            state, stream["tap_stream_id"], "is_skip", True
         ):
             LOGGER.info("Skipping the stream %s", stream["tap_stream_id"])
             continue

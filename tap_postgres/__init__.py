@@ -308,6 +308,8 @@ def do_sync(conn_config, catalog, default_replication_method, state, state_file=
     else:
         LOGGER.info("No streams marked as currently_syncing in state file")
 
+    LOGGER.info("Current state %s", state)
+    
     for stream in traditional_streams:
         
         if conn_config["skip_streams_by_default"] and singer.get_bookmark(

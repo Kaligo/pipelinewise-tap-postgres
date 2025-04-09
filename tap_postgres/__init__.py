@@ -309,7 +309,7 @@ def do_sync(conn_config, catalog, default_replication_method, state, state_file=
         LOGGER.info("No streams marked as currently_syncing in state file")
 
     LOGGER.info("Current state %s", state)
-    
+
     for stream in traditional_streams:
         
         if conn_config["skip_streams_by_default"] and singer.get_bookmark(
@@ -323,6 +323,12 @@ def do_sync(conn_config, catalog, default_replication_method, state, state_file=
                                         state,
                                         sync_method_lookup[stream['tap_stream_id']],
                                         end_lsn)
+
+        if not singer.get_bookmark(
+            state, stream["tap_stream_id"], "is_skip", True
+        ):
+            LOGGER.info("Reset `is_skip` in the state of the stream %s", stream["tap_stream_id"])
+            singer.write_bookmark(state, stream['tap_stream_id'], 'is_skip', True)
 
     logical_streams.sort(key=lambda s: metadata.to_map(s['metadata']).get(()).get('database-name'))
     for dbname, streams in itertools.groupby(logical_streams,

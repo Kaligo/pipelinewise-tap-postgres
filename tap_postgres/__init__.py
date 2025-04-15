@@ -1,4 +1,5 @@
 import argparse
+import ast
 import itertools
 import copy
 import psycopg2
@@ -395,6 +396,7 @@ def main_impl():
     limit = args.config.get('limit')
     skip_last_n_seconds = args.config.get('skip_last_n_seconds')
     look_back_n_seconds = args.config.get('look_back_n_seconds')
+    recover_mappings = args.config.get('recover_mappings')
     conn_config = {
         # Required config keys
         'host': args.config['host'],
@@ -413,7 +415,8 @@ def main_impl():
         'use_secondary': args.config.get('use_secondary', False),
         'limit': int(limit) if limit else None,
         'skip_last_n_seconds': int(skip_last_n_seconds) if skip_last_n_seconds else None,
-        'look_back_n_seconds': int(look_back_n_seconds) if look_back_n_seconds else None
+        'look_back_n_seconds': int(look_back_n_seconds) if look_back_n_seconds else None,
+        'recover_mappings': ast.literal_eval(recover_mappings) if recover_mappings else {}
     }
 
     if conn_config['use_secondary']:

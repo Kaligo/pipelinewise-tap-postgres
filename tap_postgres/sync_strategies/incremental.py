@@ -172,7 +172,7 @@ def _get_select_sql(params):
     limit_statement = f'LIMIT {params["limit"]}' if params["limit"] else ''
 
     if reconcile_dates:=recover_mappings.get(table_name):
-        where_statement = f"WHERE {replication_key} in ({','.join(map(lambda reconcile_date: f"'{reconcile_date}'", reconcile_dates))})"
+        where_statement = f"WHERE {replication_key}::DATE in ({','.join(map(lambda reconcile_date: f"'{reconcile_date}'", reconcile_dates))})"
     else:
         where_incr = f"{replication_key} >= '{replication_key_value}'::{replication_key_sql_datatype}" \
             if replication_key_value else ""

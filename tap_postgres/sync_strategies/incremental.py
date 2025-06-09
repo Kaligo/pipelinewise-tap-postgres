@@ -89,7 +89,8 @@ def sync_table(conn_info, stream, state, desired_columns, md_map):
                                               "table_name": stream['table_name'],
                                               "limit": conn_info['limit'],
                                               "skip_last_n_seconds": conn_info['skip_last_n_seconds'],
-                                              "look_back_n_seconds": conn_info['look_back_n_seconds']
+                                              "look_back_n_seconds": conn_info['look_back_n_seconds'],
+                                              "recover_mappings": conn_info['recover_mappings'],
                                               })
                 LOGGER.info('select statement: %s with itersize %s', select_sql, cur.itersize)
                 cur.execute(select_sql)
@@ -166,20 +167,24 @@ def _get_select_sql(params):
     replication_key_value = params['replication_key_value']
     schema_name = params['schema_name']
     table_name = params['table_name']
+    recover_mappings = params['recover_mappings']
 
     limit_statement = f'LIMIT {params["limit"]}' if params["limit"] else ''
 
-    where_incr = f"{replication_key} >= '{replication_key_value}'::{replication_key_sql_datatype}" \
-        if replication_key_value else ""
-    
-    where_incr += f" - interval '{params['look_back_n_seconds']} seconds'" \
-        if params["look_back_n_seconds"] and replication_key_sql_datatype.startswith("timestamp") and replication_key_value else ""
+    if reconcile_dates:=recover_mappings.get(f"{schema_name}-{table_name}"):
+        where_statement = f"WHERE {replication_key}::DATE in ({','.join(map(lambda reconcile_date: f"'{reconcile_date}'", reconcile_dates))})"
+    else:
+        where_incr = f"{replication_key} >= '{replication_key_value}'::{replication_key_sql_datatype}" \
+            if replication_key_value else ""
 
-    where_skip = f"{replication_key} <= NOW() - interval '{params['skip_last_n_seconds']} seconds'" \
-        if params["skip_last_n_seconds"] and replication_key_sql_datatype.startswith("timestamp") else ""
+        where_incr += f" - interval '{params['look_back_n_seconds']} seconds'" \
+            if params["look_back_n_seconds"] and replication_key_sql_datatype.startswith("timestamp") and replication_key_value else ""
 
-    where_statement = f"WHERE {where_incr}{' AND ' if where_incr and where_skip else ''}{where_skip}" \
-        if where_incr or where_skip else ""
+        where_skip = f"{replication_key} <= NOW() - interval '{params['skip_last_n_seconds']} seconds'" \
+            if params["skip_last_n_seconds"] and replication_key_sql_datatype.startswith("timestamp") else ""
+
+        where_statement = f"WHERE {where_incr}{' AND ' if where_incr and where_skip else ''}{where_skip}" \
+            if where_incr or where_skip else ""
 
     select_sql = f"""
     SELECT {','.join(escaped_columns)}

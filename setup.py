@@ -16,10 +16,10 @@ setup(name='pipelinewise-tap-postgres',
           'License :: OSI Approved :: GNU Affero General Public License v3',
           'Programming Language :: Python :: 3 :: Only'
       ],
-      python_requires=">=3.7,<3.13",
+      python_requires=">=3.7,<3.14",
       install_requires=[
           'pipelinewise-singer-python==1.*',
-          'psycopg2-binary==2.9.5',
+          'psycopg2-binary==2.9.10',
           'strict-rfc3339==0.7',
       ],
       extras_require={

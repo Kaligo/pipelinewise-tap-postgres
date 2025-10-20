@@ -72,28 +72,26 @@ def refresh_streams_schema(conn_config: Dict, streams: List[Dict]):
             for stream in discover_db(conn, conn_config.get('filter_schemas'), [st['table_name'] for st in streams])
         }
 
+    LOGGER.debug('New discovery schemas %s', new_discovery)
+
+    # For every stream dictionary, update the schema and metadata from the new discovery
     for idx, stream in enumerate(streams):
+        # update schema
         streams[idx]['schema'] = copy.deepcopy(new_discovery[stream['tap_stream_id']]['schema'])
 
-        LOGGER.debug('New discovery schemas %s', new_discovery)
+        origina_metadata_map = metadata.to_map(stream['metadata'])
+        discovered_metadata_map = metadata.to_map(new_discovery[stream['tap_stream_id']]['metadata'])
 
-        # For every stream dictionary, update the schema and metadata from the new discovery
-        for idx, stream in enumerate(streams):
-            # update schema
-            streams[idx]['schema'] = copy.deepcopy(new_discovery[stream['tap_stream_id']]['schema'])
+        for metadata_key, metadata_value in discovered_metadata_map.items():
+            # Prevere existing metadata configured in YAML over newly discovered metadata
+            if metadata_key in origina_metadata_map:
+                origina_metadata_map[metadata_key].update(metadata_value)
+            else:
+                origina_metadata_map[metadata_key] = metadata_value
 
-            original_metadata_map = metadata.to_map(stream['metadata'])
-            new_metadata_map = metadata.to_map(new_discovery[stream['tap_stream_id']]['metadata'])
+        merged_metadata = metadata.to_list(origina_metadata_map)
 
-            for metadata_key in new_metadata_map:
-                if metadata_key in original_metadata_map:
-                    original_metadata_map[metadata_key].update(new_metadata_map[metadata_key])
-                else:
-                    original_metadata_map[metadata_key] = new_metadata_map[metadata_key]
-
-            updated_metadata = metadata.to_list(original_metadata_map)
-
-            streams[idx]['metadata'] = copy.deepcopy(updated_metadata)
+        streams[idx]['metadata'] = copy.deepcopy(merged_metadata)
 
     LOGGER.debug('Updated streams schemas %s', streams)
 

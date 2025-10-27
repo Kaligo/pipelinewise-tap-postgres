@@ -236,11 +236,9 @@ def schema_for_column_datatype(col):
         scale = post_db.numeric_scale(col)
         precision = post_db.numeric_precision(col)
 
-        schema['exclusiveMaximum'] = True
-        schema['maximum'] = post_db.numeric_max(precision, scale)
         schema['multipleOf'] = post_db.numeric_multiple_of(scale)
-        schema['exclusiveMinimum'] = True
-        schema['minimum'] = post_db.numeric_min(precision, scale)
+        schema['exclusiveMaximum'] = post_db.numeric_max(precision, scale)
+        schema['exclusiveMinimum'] = post_db.numeric_min(precision, scale)
         return schema
 
     if data_type in {'time without time zone', 'time with time zone'}:
@@ -378,10 +376,8 @@ def include_array_schemas(columns, schema):
         schema_name = schema_name_for_numeric_array(precision, scale)
         schema['definitions'][schema_name] = {'type': ['null', 'number', 'array'],
                                               'multipleOf': post_db.numeric_multiple_of(scale),
-                                              'exclusiveMaximum': True,
-                                              'maximum': post_db.numeric_max(precision, scale),
-                                              'exclusiveMinimum': True,
-                                              'minimum': post_db.numeric_min(precision, scale),
+                                              'exclusiveMaximum': post_db.numeric_max(precision, scale),
+                                              'exclusiveMinimum': post_db.numeric_min(precision, scale),
                                               'items': {'$ref': f'#/definitions/{schema_name}'}}
 
     return schema

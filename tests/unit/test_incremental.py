@@ -32,7 +32,8 @@ class TestIncremental(TestCase):
             'use_secondary': False,
             'limit': None,
             'skip_last_n_seconds': None,
-            'look_back_n_seconds': None
+            'look_back_n_seconds': None,
+            'recover_mappings': {}
         }
         self.stream = {'tap_stream_id': 5, 'stream': 'bar', 'table_name': 'pg_tbl'}
         self.md_map = {
@@ -65,7 +66,7 @@ class TestIncremental(TestCase):
         self.assertEqual(expected_state_replication_key_value,
                          actual_state['bookmarks'][self.stream['tap_stream_id']]['replication_key_value'],
                          )
-    
+
     @patch('psycopg2.extras.register_hstore')
     def test_sync_table_return_1_row(self, mocked_register_hstore):
         """Test for sync_table if it returns 1 row"""
@@ -114,3 +115,42 @@ class TestIncremental(TestCase):
                          )
         incremental.UPDATE_BOOKMARK_PERIOD = original_update_bookmark_period
         mocked_singer_write.assert_called_with(singer.StateMessage(value=self.state))
+
+    @patch('psycopg2.extras.register_hstore')
+    def test_sync_table_with_recover_mappings(self, mocked_register_hstore):
+        """Test sync_table with recover_mappings"""
+        desired_columns = ['foo_key']
+        self.conn_config['recover_mappings'] = {'pg_catalog-pg_tbl': ['2025-01-01', '2025-01-02']}
+        self.state['bookmarks'] = {}
+
+        actual_state = incremental.sync_table(self.conn_config, self.stream, self.state, desired_columns, self.md_map)
+        mocked_register_hstore.assert_called()
+
+        # Should complete without error
+        self.assertIsNotNone(actual_state)
+
+    @patch('psycopg2.extras.register_hstore')
+    def test_sync_table_with_look_back_n_seconds(self, mocked_register_hstore):
+        """Test sync_table with look_back_n_seconds"""
+        desired_columns = ['foo_key']
+        self.conn_config['look_back_n_seconds'] = 300
+        self.state['bookmarks'] = {}
+
+        actual_state = incremental.sync_table(self.conn_config, self.stream, self.state, desired_columns, self.md_map)
+        mocked_register_hstore.assert_called()
+
+        # Should complete without error
+        self.assertIsNotNone(actual_state)
+
+    @patch('psycopg2.extras.register_hstore')
+    def test_sync_table_with_skip_last_n_seconds(self, mocked_register_hstore):
+        """Test sync_table with skip_last_n_seconds"""
+        desired_columns = ['foo_key']
+        self.conn_config['skip_last_n_seconds'] = 60
+        self.state['bookmarks'] = {}
+
+        actual_state = incremental.sync_table(self.conn_config, self.stream, self.state, desired_columns, self.md_map)
+        mocked_register_hstore.assert_called()
+
+        # Should complete without error
+        self.assertIsNotNone(actual_state)

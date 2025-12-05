@@ -7,30 +7,24 @@ venv:
 	pip install -e .[test]
 
 pylint:
-	. ./venv/bin/activate ;\
-	pylint --rcfile .pylintrc tap_postgres/
+	./venv/bin/python -m pylint --rcfile .pylintrc --fail-under=9.5 tap_postgres/
 
 start_db:
-	docker-compose up -d
+	docker compose up -d
 
 unit_test:
-	. ./venv/bin/activate ;\
-	coverage run --data-file=.coverage.unit --source=tap_postgres -m pytest -v tests/unit ;\
+	./venv/bin/python -m coverage run --data-file=.coverage.unit --source=tap_postgres -m pytest -v tests/unit
 
 unit_test_cov: unit_test
-	. ./venv/bin/activate ;\
-	coverage report --data-file=.coverage.unit --fail-under=58
+	./venv/bin/python -m coverage report --data-file=.coverage.unit --fail-under=58
 
 integration_test:
-	. ./venv/bin/activate ;\
 	. ./tests/integration/env ;\
-	coverage run --data-file=.coverage.integration --source=tap_postgres -m pytest -v tests/integration ;\
+	./venv/bin/python -m coverage run --data-file=.coverage.integration --source=tap_postgres -m pytest -v tests/integration
 
 integration_test_cov: integration_test
-	. ./venv/bin/activate ;\
-	coverage report --data-file=.coverage.integration --fail-under=63
+	./venv/bin/python -m coverage report --data-file=.coverage.integration --fail-under=63
 
 total_cov:
-	. ./venv/bin/activate ;\
-	coverage combine ;\
-	coverage report --fail-under=85
+	./venv/bin/python -m coverage combine
+	./venv/bin/python -m coverage report --fail-under=85

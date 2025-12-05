@@ -17,6 +17,7 @@ import tap_postgres.sync_strategies.common as sync_common
 from tap_postgres.sync_strategies import logical_replication
 from tap_postgres.sync_strategies import full_table
 from tap_postgres.sync_strategies import incremental
+from tap_postgres.sync_strategies import fast_sync_rds
 from tap_postgres.discovery_utils import discover_db
 from tap_postgres.stream_utils import (
     dump_catalog, clear_state_on_replication_change,
@@ -89,7 +90,56 @@ def do_sync_incremental(conn_config, stream, state, desired_columns, md_map):
     return state
 
 
-def sync_method_for_streams(streams, state, default_replication_method):
+def _create_fast_sync_rds_strategy(conn_config):
+    fast_sync_rds_enabled = conn_config.get('fast_sync_rds', False)
+    if not fast_sync_rds_enabled:
+        return None
+
+    s3_bucket = conn_config.get('fast_sync_rds_s3_bucket')
+    if not s3_bucket:
+        raise Exception("fast_sync_rds_s3_bucket is required when fast_sync_rds is enabled")
+
+    s3_region = conn_config.get('fast_sync_rds_s3_region')
+    if not s3_region:
+        raise Exception("fast_sync_rds_s3_region is required when fast_sync_rds is enabled")
+
+    s3_prefix = conn_config.get('fast_sync_rds_s3_prefix', '')
+
+    LOGGER.info(
+        "Fast sync RDS is enabled. S3 bucket: %s, prefix: %s, region: %s",
+        s3_bucket, s3_prefix, s3_region
+    )
+    fast_sync_rds_strategy = fast_sync_rds.FastSyncRdsStrategy(conn_config, s3_bucket, s3_prefix, s3_region)
+
+    return fast_sync_rds_strategy
+
+
+def do_fast_sync_rds(conn_config, stream, state, desired_columns, md_map, sync_method):
+    fast_sync_rds_strategy = _create_fast_sync_rds_strategy(conn_config)
+    state = singer.set_currently_syncing(state, stream['tap_stream_id'])
+
+    if fast_sync_rds_strategy is None:
+        raise Exception("fast_sync_rds_strategy is required for fast_sync_rds sync method")
+
+    replication_key = md_map.get((), {}).get('replication-key')
+    state = singer.write_bookmark(state, stream['tap_stream_id'], 'replication_key', replication_key)
+    sync_common.send_schema_message(stream, [replication_key] if replication_key else [])
+
+    LOGGER.info("Performing %s", sync_method)
+
+    if sync_method == 'fast_sync_rds_full_table':
+        state = fast_sync_rds_strategy.sync_table_full(stream, state, desired_columns, md_map)
+    elif sync_method == 'fast_sync_rds_incremental':
+        replication_key_value = singer.get_bookmark(state, stream['tap_stream_id'], 'replication_key_value')
+        state = fast_sync_rds_strategy.sync_table_incremental(
+            stream, state, desired_columns, md_map,
+            replication_key, replication_key_value
+        )
+
+    return state
+
+
+def sync_method_for_streams(streams, state, default_replication_method, fast_sync_rds_enabled=False):
     """
 	Determines the replication method of each stream
 	"""
@@ -114,6 +164,12 @@ def sync_method_for_streams(streams, state, default_replication_method):
 
         if len(desired_columns) == 0:
             LOGGER.warning('There are no columns selected for stream %s, skipping it', stream['tap_stream_id'])
+            continue
+
+        # If fast_sync_rds is enabled, use it for FULL_TABLE and INCREMENTAL methods
+        if fast_sync_rds_enabled and replication_method in {'FULL_TABLE', 'INCREMENTAL'}:
+            lookup[stream['tap_stream_id']] = f"fast_sync_rds_{replication_method.lower()}"
+            traditional_steams.append(stream)
             continue
 
         if replication_method == 'LOG_BASED' and stream_metadata.get((), {}).get('is-view'):
@@ -168,7 +224,9 @@ def sync_traditional_stream(conn_config, stream, state, sync_method, end_lsn):
 
     register_type_adapters(conn_config)
 
-    if sync_method == 'full':
+    if sync_method == 'fast_sync_rds_full_table' or sync_method == 'fast_sync_rds_incremental':
+        state = do_fast_sync_rds(conn_config, stream, state, desired_columns, md_map, sync_method)
+    elif sync_method == 'full':
         state = singer.set_currently_syncing(state, stream['tap_stream_id'])
         state = do_sync_full_table(conn_config, stream, state, desired_columns, md_map)
     elif sync_method == 'incremental':
@@ -280,7 +338,9 @@ def do_sync(conn_config, catalog, default_replication_method, state, state_file=
     currently_syncing = singer.get_currently_syncing(state)
     streams = list(filter(is_selected_via_metadata, catalog['streams']))
     streams.sort(key=lambda s: s['tap_stream_id'])
+    fast_sync_rds_enabled = conn_config.get('fast_sync_rds', False)
     LOGGER.info("Selected streams: %s ", [s['tap_stream_id'] for s in streams])
+
     if any_logical_streams(streams, default_replication_method):
         # Use of logical replication requires fetching an lsn
         end_lsn = logical_replication.fetch_current_lsn(conn_config)
@@ -291,7 +351,7 @@ def do_sync(conn_config, catalog, default_replication_method, state, state_file=
     refresh_streams_schema(conn_config, streams)
 
     sync_method_lookup, traditional_streams, logical_streams = \
-        sync_method_for_streams(streams, state, default_replication_method)
+        sync_method_for_streams(streams, state, default_replication_method, fast_sync_rds_enabled)
 
     if currently_syncing:
         LOGGER.debug("Found currently_syncing: %s", currently_syncing)
@@ -416,7 +476,12 @@ def main_impl():
         'limit': int(limit) if limit else None,
         'skip_last_n_seconds': int(skip_last_n_seconds) if skip_last_n_seconds else None,
         'look_back_n_seconds': int(look_back_n_seconds) if look_back_n_seconds else None,
-        'recover_mappings': ast.literal_eval(recover_mappings) if recover_mappings else {}
+        'recover_mappings': ast.literal_eval(recover_mappings) if recover_mappings else {},
+        # Fast sync RDS config
+        'fast_sync_rds': args.config.get('fast_sync_rds', False),
+        'fast_sync_rds_s3_bucket': args.config.get('fast_sync_rds_s3_bucket'),
+        'fast_sync_rds_s3_prefix': args.config.get('fast_sync_rds_s3_prefix', ''),
+        'fast_sync_rds_s3_region': args.config.get('fast_sync_rds_s3_region')
     }
 
     if conn_config['use_secondary']:

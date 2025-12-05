@@ -70,6 +70,11 @@ Full list of options in `config.json`:
 | secondary_host             | String  | No       | -       | PostgreSQL Replica host (required if `use_secondary` is `True`)                                                                                                                            |
 | secondary_port             | Integer | No       | -       | PostgreSQL Replica port (required if `use_secondary` is `True`)                                                                                                                            |
 | limit                      | Integer | No       | None    | Adds a limit to INCREMENTAL queries to limit the number of records returns per run                                                                                                         |
+| fast_sync_rds              | Boolean | No       | False   | Enable fast sync RDS mode for optimized performance. When enabled, data is exported directly from RDS PostgreSQL to S3 using `aws_s3.query_export_to_s3`. Requires AWS RDS PostgreSQL with aws_s3 extension. |
+| fast_sync_rds_s3_bucket    | String  | No       | -       | S3 bucket name for fast sync RDS exports (required if `fast_sync_rds` is `True`)                                                                                                                    |
+| fast_sync_rds_s3_prefix    | String  | No       | ""      | S3 prefix/path for fast sync RDS exports                                                                                                                                                        |
+| fast_sync_rds_s3_region    | String  | No       | -       | AWS region where the S3 bucket is located (required if `fast_sync_rds` is `True`)                                                                                                                    |
+| fast_sync_rds_add_metadata_columns | Boolean | No       | True    | Whether to add metadata columns (`_SDC_BATCHED_AT`, `_SDC_DELETED_AT`, `_SDC_EXTRACTED_AT`) to the exported data. Set to `False` to exclude these columns. **Note:** This setting must be synced with the `add_metadata_columns` setting in `pipelinewise-target-redshift` to ensure consistent schema between tap and target. |
 
 
 ### Run the tap in Discovery Mode
@@ -114,6 +119,90 @@ tap-postgres --config config.json --catalog catalog.json
 The tap will write bookmarks to stdout which can be captured and passed as an optional `--state state.json` parameter
 to the tap for the next sync.
 
+### Fast Sync RDS Mode
+
+Fast Sync RDS is a high-performance data syncing strategy designed specifically for AWS RDS PostgreSQL as the data source and Redshift as the target. It bypasses the Singer Specification for optimized performance by exporting data directly from RDS PostgreSQL to S3 using the `aws_s3.query_export_to_s3` function.
+
+#### Fast Sync RDS Requirements
+
+* **AWS RDS PostgreSQL**: Fast sync RDS requires an AWS RDS PostgreSQL instance (or Aurora PostgreSQL) with the `aws_s3` and `aws_commons` extensions installed.
+
+* **S3 Bucket**: An S3 bucket accessible from both the RDS PostgreSQL instance and the Redshift cluster.
+
+* **IAM Permissions**: The RDS PostgreSQL instance must have IAM permissions to write to the S3 bucket. See [AWS document](https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/postgresql-s3-export.html) for detailed setup instructions.
+
+#### Enabling Fast Sync RDS
+
+To enable fast sync RDS, add the following configuration to your `config.json`:
+
+```json
+{
+  "fast_sync_rds": true,
+  "fast_sync_rds_s3_bucket": "your-s3-bucket-name",
+  "fast_sync_rds_s3_prefix": "postgres/exports",
+  "fast_sync_rds_s3_region": "us-east-1",
+  "fast_sync_rds_add_metadata_columns": true
+}
+```
+
+When fast sync RDS is enabled, streams with `FULL_TABLE` or `INCREMENTAL` replication methods will automatically use the fast sync RDS strategy. The tap will export data directly to S3 and output S3 path information as `FAST_SYNC_RDS_S3_INFO` messages that can be consumed by the target (Redshift) side.
+
+For detailed setup instructions, see [Exporting data from an Aurora PostgreSQL DB cluster to Amazon S3](https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/postgresql-s3-export.html).
+
+#### Fast Sync RDS Benefits
+
+* **Performance**: Direct export from PostgreSQL to S3 bypasses intermediate processing
+* **Scalability**: Handles large tables efficiently
+* **Deletion Detection**: Supports propagating row deletions from source to target by comparing full table dumps
+
+#### Fast Sync RDS Limitations
+
+* **Bypasses Data Processing**: This approach exports data directly to S3, which bypasses regular mappers and other plugins that may be configured in your pipeline. As a result, this method should only be used for safe views and tables that do not contain PII (Personally Identifiable Information) or other sensitive data that requires transformation or filtering.
+
+* **File Splitting Behavior**: `aws_s3.query_export_to_s3` automatically splits large exports into multiple files when data exceeds approximately 6GB per file. Files are named with the pattern:
+  - Base file: `{s3_path}`
+  - Additional files: `{s3_path}_part2`, `{s3_path}_part3`, etc.
+
+* **Metadata Columns Configuration**: The `fast_sync_rds_add_metadata_columns` setting in this tap must match the `add_metadata_columns` setting in `pipelinewise-target-redshift`. If they differ, schema mismatches will occur when loading data from S3 to Redshift. Both settings should be set to the same value (either both `True` or both `False`).
+
+#### FAST_SYNC_RDS_S3_INFO Message Format
+
+When fast sync RDS is enabled, the tap outputs `FAST_SYNC_RDS_S3_INFO` messages to stdout. These messages contain all the information needed by the target (Redshift) to load data from S3. The message format is:
+
+```json
+{
+  "type": "FAST_SYNC_RDS_S3_INFO",
+  "stream": "schema_name-table_name",
+  "s3_bucket": "your-s3-bucket-name",
+  "s3_path": "postgres/exports/schema_name-table_name/2025-01-15-123456_abc12345.csv",
+  "s3_region": "us-east-1",
+  "rows_uploaded": 1000,
+  "files_uploaded": 1,
+  "bytes_uploaded": 50000,
+  "version": 1705323456000,
+  "time_extracted": "2025-01-15T12:34:56.789000+00:00",
+  "replication_method": "FULL_TABLE"
+}
+```
+
+**Message Fields:**
+
+| Field                | Type    | Description                                                                                                 |
+|----------------------|---------|-------------------------------------------------------------------------------------------------------------|
+| `type`               | String  | Always `"FAST_SYNC_RDS_S3_INFO"`                                                                            |
+| `stream`              | String  | Destination stream name in format `{schema_name}-{table_name}`                                              |
+| `s3_bucket`           | String  | S3 bucket name where the exported data is stored                                                           |
+| `s3_path`             | String  | S3 path to the exported CSV file(s). Format: `{s3_prefix}/{schema_name}-{table_name}/{timestamp}_{sync_id}.csv` |
+| `s3_region`           | String  | AWS region where the S3 bucket is located                                                                   |
+| `rows_uploaded`       | Integer | Number of rows exported to S3                                                                               |
+| `files_uploaded`      | Integer | Number of files created (may be > 1 if export was split)                                                   |
+| `bytes_uploaded`      | Integer | Total bytes exported to S3                                                                                 |
+| `version`             | Integer | Stream version (timestamp in milliseconds)                                                                |
+| `time_extracted`      | String  | ISO 8601 formatted timestamp when data was extracted                                                         |
+| `replication_method`  | String  | Replication method used: `"FULL_TABLE"` or `"INCREMENTAL"`                                                 |
+
+**Note:** When `files_uploaded > 1`, the target must handle loading from multiple files. Additional files follow the naming pattern: `{s3_path}_part2`, `{s3_path}_part3`, etc.
+
 ### Log Based replication requirements
 
 * PostgreSQL databases running **PostgreSQL versions 9.4.x or greater**. To avoid a critical PostgreSQL bug,
@@ -130,7 +219,7 @@ to the tap for the next sync.
 * **wal2json plugin**: To use Log Based for your PostgreSQL integration, you must install the wal2json plugin version >= 2.3.
   The wal2json plugin outputs JSON objects for logical decoding, which the tap then uses to perform Log-based Replication.
   Steps for installing the plugin vary depending on your operating system. Instructions for each operating system type
-  are in the wal2json’s GitHub repository:
+  are in the wal2json's GitHub repository:
 
   * [Unix-based operating systems](https://github.com/eulerto/wal2json#unix-based-operating-systems)
   * [Windows](https://github.com/eulerto/wal2json#windows)
@@ -147,7 +236,7 @@ to the tap for the next sync.
 
     Restart your PostgreSQL service to ensure the changes take effect.
 
-    **Note**: For `max_replication_slots` and `max_wal_senders`, we’re defaulting to a value of 5.
+    **Note**: For `max_replication_slots` and `max_wal_senders`, we're defaulting to a value of 5.
     This should be sufficient unless you have a large number of read replicas connected to the master instance.
 
 
@@ -163,7 +252,7 @@ to the tap for the next sync.
   ```
 
   **Note**: Replication slots are specific to a given database in a cluster. If you want to connect multiple
-  databases - whether in one integration or several - you’ll need to create a replication slot for each database.
+  databases - whether in one integration or several - you'll need to create a replication slot for each database.
 
 ### To run tests:
 

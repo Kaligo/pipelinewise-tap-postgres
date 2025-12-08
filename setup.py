@@ -19,7 +19,7 @@ setup(name='pipelinewise-tap-postgres',
       python_requires=">=3.7,<3.14",
       install_requires=[
           'pipelinewise-singer-python==1.*',
-          'psycopg2-binary==2.9.10',
+          'psycopg2-binary==2.9.11',
           'strict-rfc3339==0.7',
       ],
       extras_require={

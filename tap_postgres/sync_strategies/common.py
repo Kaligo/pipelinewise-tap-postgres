@@ -2,35 +2,37 @@ import sys
 import simplejson as json
 import singer
 from typing import Dict, Optional
-from singer import  metadata
+from singer import metadata
 import tap_postgres.db as post_db
 
 
 # pylint: disable=invalid-name,missing-function-docstring
 def should_sync_column(md_map, field_name):
-    field_metadata = md_map.get(('properties', field_name), {})
-    return singer.should_sync_field(field_metadata.get('inclusion'),
-                                    field_metadata.get('selected'),
-                                    True)
+    field_metadata = md_map.get(("properties", field_name), {})
+    return singer.should_sync_field(
+        field_metadata.get("inclusion"), field_metadata.get("selected"), True
+    )
 
 
 def write_message(message):
-    sys.stdout.write(json.dumps(message, use_decimal=True) + '\n')
+    sys.stdout.write(json.dumps(message, use_decimal=True) + "\n")
     sys.stdout.flush()
 
 
 def send_schema_message(stream, bookmark_properties):
-    s_md = metadata.to_map(stream['metadata'])
-    if s_md.get((), {}).get('is-view'):
-        key_properties = s_md.get((), {}).get('view-key-properties', [])
+    s_md = metadata.to_map(stream["metadata"])
+    if s_md.get((), {}).get("is-view"):
+        key_properties = s_md.get((), {}).get("view-key-properties", [])
     else:
-        key_properties = s_md.get((), {}).get('table-key-properties', [])
+        key_properties = s_md.get((), {}).get("table-key-properties", [])
 
-    schema_message = {'type' : 'SCHEMA',
-                      'stream' : post_db.calculate_destination_stream_name(stream, s_md),
-                      'schema' : stream['schema'],
-                      'key_properties' : key_properties,
-                      'bookmark_properties': bookmark_properties}
+    schema_message = {
+        "type": "SCHEMA",
+        "stream": post_db.calculate_destination_stream_name(stream, s_md),
+        "schema": stream["schema"],
+        "key_properties": key_properties,
+        "bookmark_properties": bookmark_properties,
+    }
 
     write_message(schema_message)
 
@@ -69,12 +71,12 @@ def get_select_latest_sql(params: Dict) -> str:
         >>> sql = get_select_latest_sql(params)
         >>> # Returns: "SELECT id,name FROM "public"."users" ORDER BY updated_at DESC LIMIT 1;"
     """
-    escaped_columns = params['escaped_columns']
-    replication_key = post_db.prepare_columns_sql(params['replication_key'])
-    schema_name = params['schema_name']
-    table_name = params['table_name']
+    escaped_columns = params["escaped_columns"]
+    replication_key = post_db.prepare_columns_sql(params["replication_key"])
+    schema_name = params["schema_name"]
+    table_name = params["table_name"]
     select_sql = f"""
-    SELECT {','.join(escaped_columns)}
+    SELECT {",".join(escaped_columns)}
     FROM {post_db.fully_qualified_table_name(schema_name, table_name)}
     ORDER BY {replication_key} DESC LIMIT 1;"""
 
@@ -88,8 +90,8 @@ def _build_where_clause_for_replication_query(params: dict) -> str:
         return ""
 
     replication_key = post_db.prepare_columns_sql(replication_key)
-    schema_name = params['schema_name']
-    table_name = params['table_name']
+    schema_name = params["schema_name"]
+    table_name = params["table_name"]
     replication_key_value = params.get("replication_key_value", None)
     replication_key_sql_datatype = params.get("replication_key_sql_datatype", None)
     look_back_n_seconds = params.get("look_back_n_seconds", None)
@@ -97,21 +99,37 @@ def _build_where_clause_for_replication_query(params: dict) -> str:
     recover_mappings = params.get("recover_mappings", {})
 
     if reconcile_dates := recover_mappings.get(f"{schema_name}-{table_name}"):
-        date_list = ','.join(f"'{date}'" for date in reconcile_dates)
+        date_list = ",".join(f"'{date}'" for date in reconcile_dates)
         return f"WHERE {replication_key}::DATE in ({date_list})"
 
-    replication_key_value = escape_sql_string(replication_key_value) if replication_key_value else None
+    replication_key_value = (
+        escape_sql_string(replication_key_value) if replication_key_value else None
+    )
 
-    where_incr = f"{replication_key} >= '{replication_key_value}'::{replication_key_sql_datatype}" \
-        if replication_key_value else ""
-    where_incr += f" - interval '{look_back_n_seconds} seconds'" \
-        if look_back_n_seconds and replication_key_sql_datatype.startswith("timestamp") and replication_key_value else ""
+    where_incr = (
+        f"{replication_key} >= '{replication_key_value}'::{replication_key_sql_datatype}"
+        if replication_key_value
+        else ""
+    )
+    where_incr += (
+        f" - interval '{look_back_n_seconds} seconds'"
+        if look_back_n_seconds
+        and replication_key_sql_datatype.startswith("timestamp")
+        and replication_key_value
+        else ""
+    )
 
-    where_skip = f"{replication_key} <= NOW() - interval '{skip_last_n_seconds} seconds'" \
-        if skip_last_n_seconds and replication_key_sql_datatype.startswith("timestamp") else ""
+    where_skip = (
+        f"{replication_key} <= NOW() - interval '{skip_last_n_seconds} seconds'"
+        if skip_last_n_seconds and replication_key_sql_datatype.startswith("timestamp")
+        else ""
+    )
 
-    where_statement = f"WHERE {where_incr}{' AND ' if where_incr and where_skip else ''}{where_skip}" \
-        if where_incr or where_skip else ""
+    where_statement = (
+        f"WHERE {where_incr}{' AND ' if where_incr and where_skip else ''}{where_skip}"
+        if where_incr or where_skip
+        else ""
+    )
 
     return where_statement
 
@@ -154,9 +172,9 @@ def get_query_for_replication_data(params: Dict) -> str:
         >>> sql = get_query_for_replication_data(params)
         >>> # Returns a query with WHERE, ORDER BY, and LIMIT clauses
     """
-    escaped_columns = params['escaped_columns']
-    schema_name = params['schema_name']
-    table_name = params['table_name']
+    escaped_columns = params["escaped_columns"]
+    schema_name = params["schema_name"]
+    table_name = params["table_name"]
     limit_value = params.get("limit", None)
     limit_statement = f"LIMIT {limit_value}" if limit_value else ""
     order_statement = ""
@@ -169,7 +187,7 @@ def get_query_for_replication_data(params: Dict) -> str:
     where_statement = _build_where_clause_for_replication_query(params)
 
     select_sql = f"""
-    SELECT {','.join(escaped_columns)}
+    SELECT {",".join(escaped_columns)}
     FROM (
         SELECT *
         FROM {post_db.fully_qualified_table_name(schema_name, table_name)}

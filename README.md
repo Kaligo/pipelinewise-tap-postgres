@@ -145,7 +145,7 @@ To enable fast sync RDS, add the following configuration to your `config.json`:
 }
 ```
 
-When fast sync RDS is enabled, streams with `FULL_TABLE` or `INCREMENTAL` replication methods will automatically use the fast sync RDS strategy. The tap will export data directly to S3 and output S3 path information as `FAST_SYNC_RDS_S3_INFO` messages that can be consumed by the target (Redshift) side.
+When fast sync RDS is enabled, streams with `FULL_TABLE` or `INCREMENTAL` replication methods will automatically use the fast sync RDS strategy. The tap will export data directly to S3 and embed S3 path information in STATE messages under `bookmarks[stream_id]['fast_sync_s3_info']` that can be consumed by the target (Redshift) side.
 
 For detailed setup instructions, see [Exporting data from an Aurora PostgreSQL DB cluster to Amazon S3](https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/postgresql-s3-export.html).
 
@@ -165,43 +165,50 @@ For detailed setup instructions, see [Exporting data from an Aurora PostgreSQL D
 
 * **Metadata Columns Configuration**: The `fast_sync_rds_add_metadata_columns` setting in this tap must match the `add_metadata_columns` setting in `pipelinewise-target-redshift`. If they differ, schema mismatches will occur when loading data from S3 to Redshift. Both settings should be set to the same value (either both `True` or both `False`).
 
-#### FAST_SYNC_RDS_S3_INFO Message Format
+#### Fast Sync RDS STATE Message Format
 
-When fast sync RDS is enabled, the tap outputs `FAST_SYNC_RDS_S3_INFO` messages to stdout. These messages contain all the information needed by the target (Redshift) to load data from S3. The message format is:
+When fast sync RDS is enabled, the tap embeds S3 export information in STATE messages under `bookmarks[stream_id]['fast_sync_s3_info']`. This approach ensures compatibility with Singer-based mappers and other plugins in the pipeline. The STATE message structure is:
 
 ```json
 {
-  "type": "FAST_SYNC_RDS_S3_INFO",
-  "stream": "schema_name-table_name",
-  "s3_bucket": "your-s3-bucket-name",
-  "s3_path": "postgres/exports/schema_name-table_name/2025-01-15-123456_abc12345.csv",
-  "s3_region": "us-east-1",
-  "rows_uploaded": 1000,
-  "files_uploaded": 1,
-  "bytes_uploaded": 50000,
-  "version": 1705323456000,
-  "time_extracted": "2025-01-15T12:34:56.789000+00:00",
-  "replication_method": "FULL_TABLE"
+  "type": "STATE",
+  "value": {
+    "bookmarks": {
+      "schema_name-table_name": {
+        "version": 1705323456000,
+        "replication_key_value": "...",
+        "fast_sync_s3_info": {
+          "s3_bucket": "your-s3-bucket-name",
+          "s3_path": "postgres/exports/schema_name-table_name/2025-01-15-123456_abc12345.csv",
+          "s3_region": "us-east-1",
+          "rows_uploaded": 1000,
+          "files_uploaded": 1,
+          "bytes_uploaded": 50000,
+          "time_extracted": "2025-01-15T12:34:56.789000+00:00",
+          "replication_method": "FULL_TABLE"
+        }
+      }
+    }
+  }
 }
 ```
 
-**Message Fields:**
+**fast_sync_s3_info Fields:**
 
 | Field                | Type    | Description                                                                                                 |
 |----------------------|---------|-------------------------------------------------------------------------------------------------------------|
-| `type`               | String  | Always `"FAST_SYNC_RDS_S3_INFO"`                                                                            |
-| `stream`              | String  | Destination stream name in format `{schema_name}-{table_name}`                                              |
 | `s3_bucket`           | String  | S3 bucket name where the exported data is stored                                                           |
 | `s3_path`             | String  | S3 path to the exported CSV file(s). Format: `{s3_prefix}/{schema_name}-{table_name}/{timestamp}_{sync_id}.csv` |
 | `s3_region`           | String  | AWS region where the S3 bucket is located                                                                   |
 | `rows_uploaded`       | Integer | Number of rows exported to S3                                                                               |
 | `files_uploaded`      | Integer | Number of files created (may be > 1 if export was split)                                                   |
 | `bytes_uploaded`      | Integer | Total bytes exported to S3                                                                                 |
-| `version`             | Integer | Stream version (timestamp in milliseconds)                                                                |
 | `time_extracted`      | String  | ISO 8601 formatted timestamp when data was extracted                                                         |
 | `replication_method`  | String  | Replication method used: `"FULL_TABLE"` or `"INCREMENTAL"`                                                 |
 
 **Note:** When `files_uploaded > 1`, the target must handle loading from multiple files. Additional files follow the naming pattern: `{s3_path}_part2`, `{s3_path}_part3`, etc.
+
+**Mapper Compatibility:** By embedding S3 info in STATE messages instead of custom message types, fast sync RDS is compatible with Singer-based mappers and other plugins that process the Singer message stream. STATE messages are standard Singer messages that mappers pass through without modification.
 
 ### Log Based replication requirements
 

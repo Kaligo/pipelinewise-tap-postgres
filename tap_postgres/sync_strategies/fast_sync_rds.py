@@ -6,6 +6,7 @@ AWS RDS PostgreSQL as data source and Redshift as the target. It leverages
 aws_s3.query_export_to_s3 to export data directly from RDS PostgreSQL to S3,
 bypassing the Singer Specification for optimized performance.
 """
+
 import copy
 import datetime
 import time
@@ -23,7 +24,7 @@ from singer import metrics
 import tap_postgres.db as post_db
 import tap_postgres.sync_strategies.common as sync_common
 
-LOGGER = singer.get_logger('tap_postgres')
+LOGGER = singer.get_logger("tap_postgres")
 
 
 class FastSyncRdsStrategy:
@@ -32,7 +33,9 @@ class FastSyncRdsStrategy:
     using aws_s3.query_export_to_s3 function.
     """
 
-    def __init__(self, conn_config: Dict, s3_bucket: str, s3_prefix: str, s3_region: str):
+    def __init__(
+        self, conn_config: Dict, s3_bucket: str, s3_prefix: str, s3_region: str
+    ):
         """
         Initialize FastSyncRdsStrategy
 
@@ -51,22 +54,26 @@ class FastSyncRdsStrategy:
         """
         Clean name for use in S3 path
         """
-        return name.replace('"', '').replace('/', '_')
+        return name.replace('"', "").replace("/", "_")
 
     def _generate_s3_path(self, schema_name: str, table_name: str) -> str:
         sync_id = str(uuid.uuid4())[:8]
         # Generate human-readable timestamp in YYYY-mm-DD-HHMMSS format
-        timestamp = time.strftime('%Y-%m-%d-%H%M%S', time.gmtime())
+        timestamp = time.strftime("%Y-%m-%d-%H%M%S", time.gmtime())
         # Clean schema and table names to ensure they're safe for S3 paths
         # (removes quotes and replaces '/' with '_')
         clean_schema = self._clean_name_for_s3(schema_name)
         clean_table = self._clean_name_for_s3(table_name)
 
-        path = f"{self.s3_prefix}/{clean_schema}-{clean_table}/{timestamp}_{sync_id}.csv"
+        path = (
+            f"{self.s3_prefix}/{clean_schema}-{clean_table}/{timestamp}_{sync_id}.csv"
+        )
         # Remove leading slash if prefix is empty to avoid double slashes
-        return path.lstrip('/')
+        return path.lstrip("/")
 
-    def _prepend_metadata_columns(self, columns: Optional[List[str]] = None) -> List[str]:
+    def _prepend_metadata_columns(
+        self, columns: Optional[List[str]] = None
+    ) -> List[str]:
         # Metadata columns need to go first in the same order with
         # pipelinewise-target-redshift/target_redshift/__init__.py#add_metadata_columns_to_schema
         if columns is None:
@@ -75,7 +82,7 @@ class FastSyncRdsStrategy:
             columns[:0] = [
                 "NOW() AT TIME ZONE 'UTC' AS _SDC_BATCHED_AT",
                 "NULL AS _SDC_DELETED_AT",
-                "NOW() AT TIME ZONE 'UTC' AS _SDC_EXTRACTED_AT"
+                "NOW() AT TIME ZONE 'UTC' AS _SDC_EXTRACTED_AT",
             ]
 
         return columns
@@ -88,26 +95,35 @@ class FastSyncRdsStrategy:
         md_map: Dict,
         replication_key: Optional[str] = None,
         replication_key_value: Optional[str] = None,
-        replication_key_sql_datatype: Optional[str] = None
+        replication_key_sql_datatype: Optional[str] = None,
     ) -> str:
         columns = self._prepend_metadata_columns([])
         escaped_columns = list(
-            map(partial(post_db.prepare_columns_for_select_sql, md_map=md_map), desired_columns)
+            map(
+                partial(post_db.prepare_columns_for_select_sql, md_map=md_map),
+                desired_columns,
+            )
         )
         columns.extend(escaped_columns)
 
-        return sync_common.get_query_for_replication_data({
-            "escaped_columns": columns,
-            "replication_key": replication_key,
-            "replication_key_sql_datatype": replication_key_sql_datatype,
-            "replication_key_value": replication_key_value,
-            "schema_name": schema_name,
-            "table_name": table_name,
-            "skip_last_n_seconds": self.conn_config.get("skip_last_n_seconds", None),
-            "look_back_n_seconds": self.conn_config.get("look_back_n_seconds", None),
-            "recover_mappings": self.conn_config.get("recover_mappings", {}),
-            "skip_order": True
-        })
+        return sync_common.get_query_for_replication_data(
+            {
+                "escaped_columns": columns,
+                "replication_key": replication_key,
+                "replication_key_sql_datatype": replication_key_sql_datatype,
+                "replication_key_value": replication_key_value,
+                "schema_name": schema_name,
+                "table_name": table_name,
+                "skip_last_n_seconds": self.conn_config.get(
+                    "skip_last_n_seconds", None
+                ),
+                "look_back_n_seconds": self.conn_config.get(
+                    "look_back_n_seconds", None
+                ),
+                "recover_mappings": self.conn_config.get("recover_mappings", {}),
+                "skip_order": True,
+            }
+        )
 
     def _build_export_query(self, query: str, s3_path: str) -> str:
         """
@@ -120,7 +136,9 @@ class FastSyncRdsStrategy:
         # Escape all values to prevent SQL injection and syntax errors.
         escaped_query = sync_common.escape_sql_string(query)
         escaped_bucket = sync_common.escape_sql_string(self.s3_bucket)
-        escaped_path = sync_common.escape_sql_string(s3_path)  # Required: paths can contain quotes
+        escaped_path = sync_common.escape_sql_string(
+            s3_path
+        )  # Required: paths can contain quotes
         escaped_region = sync_common.escape_sql_string(self.s3_region)
 
         return f"""
@@ -158,101 +176,75 @@ class FastSyncRdsStrategy:
                 raise RuntimeError("Export to S3 failed: No result returned")
 
             return {
-                'rows_uploaded': result['rows_uploaded'],
-                'files_uploaded': result['files_uploaded'],
-                'bytes_uploaded': result['bytes_uploaded']
+                "rows_uploaded": result["rows_uploaded"],
+                "files_uploaded": result["files_uploaded"],
+                "bytes_uploaded": result["bytes_uploaded"],
             }
 
     def _get_stream_version(self, state: Dict, stream: Dict) -> int:
         """
         Get or create stream version
         """
-        stream_version = singer.get_bookmark(state, stream['tap_stream_id'], 'version')
+        stream_version = singer.get_bookmark(state, stream["tap_stream_id"], "version")
         if stream_version is None:
             stream_version = int(time.time() * 1000)
         return stream_version
 
-    def _create_s3_info_message(  # pylint: disable=too-many-arguments,too-many-positional-arguments
-        self,
-        stream: Dict,
-        md_map: Dict,
-        s3_path: str,
-        export_result: Dict,
-        stream_version: int,
-        time_extracted,
-        replication_method: str
+    def _export_to_s3_and_get_info(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+        self, conn, query: str, s3_path: str, time_extracted, replication_method: str
     ) -> Dict:
         """
-        Create FAST_SYNC_RDS_S3_INFO message
+        Export data to S3 and return S3 info dictionary to be embedded in STATE message.
 
-        Note: When aws_s3.query_export_to_s3 splits files, it creates files with
-        naming pattern: s3_path, s3_path_part2, s3_path_part3, etc. The target
-        must handle loading from multiple files using Redshift COPY command with
-        appropriate wildcard patterns or explicit file listing.
+        Returns:
+            Dictionary containing S3 export information
         """
-
-        # Convert datetime to ISO format string for JSON serialization
-        if isinstance(time_extracted, datetime.datetime):
-            time_extracted_str = time_extracted.isoformat()
-        else:
-            time_extracted_str = str(time_extracted)
-
-        return {
-            'type': 'FAST_SYNC_RDS_S3_INFO',
-            'stream': post_db.calculate_destination_stream_name(stream, md_map),
-            's3_bucket': self.s3_bucket,
-            's3_path': s3_path,
-            's3_region': self.s3_region,
-            'rows_uploaded': export_result['rows_uploaded'],
-            'files_uploaded': export_result['files_uploaded'],
-            'bytes_uploaded': export_result['bytes_uploaded'],
-            'version': stream_version,
-            'time_extracted': time_extracted_str,
-            'replication_method': replication_method
-        }
-
-    def _export_and_send_s3_info(  # pylint: disable=too-many-arguments,too-many-positional-arguments
-        self,
-        conn,
-        stream: Dict,
-        md_map: Dict,
-        query: str,
-        s3_path: str,
-        stream_version: int,
-        time_extracted,
-        replication_method: str
-    ) -> None:
         with metrics.record_counter(None) as counter:
-            LOGGER.info("Exporting data to S3: s3://%s/%s", self.s3_bucket, s3_path)
-
             export_result = self._export_to_s3(conn, query, s3_path)
             LOGGER.debug("Running query: %s", query)
 
             LOGGER.info(
                 "Exported %s rows to S3: s3://%s/%s",
-                export_result['rows_uploaded'],
+                export_result["rows_uploaded"],
                 self.s3_bucket,
-                s3_path
+                s3_path,
             )
 
-            counter.increment(export_result['rows_uploaded'])
+            counter.increment(export_result["rows_uploaded"])
 
-            s3_info_message = self._create_s3_info_message(
-                stream, md_map, s3_path, export_result, stream_version, time_extracted, replication_method
+            # Create S3 info dictionary (without 'type' and 'stream' fields)
+            # These will be embedded in STATE message bookmarks
+            time_extracted_str = (
+                time_extracted.isoformat()
+                if isinstance(time_extracted, datetime.datetime)
+                else str(time_extracted)
             )
-            sync_common.write_message(s3_info_message)
+            s3_info = {
+                "s3_bucket": self.s3_bucket,
+                "s3_path": s3_path,
+                "s3_region": self.s3_region,
+                "rows_uploaded": export_result["rows_uploaded"],
+                "files_uploaded": export_result["files_uploaded"],
+                "bytes_uploaded": export_result["bytes_uploaded"],
+                "time_extracted": time_extracted_str,
+                "replication_method": replication_method,
+            }
+
+            return s3_info
 
     def _get_latest_replication_key_value(  # pylint: disable=invalid-name
         self, conn, schema_name: str, table_name: str, replication_key: str
     ) -> Optional[str]:
         """Get the latest replication key value from the database"""
         column_name = post_db.prepare_columns_sql(replication_key)
-        select_sql = sync_common.get_select_latest_sql({
-            "escaped_columns": [column_name],
-            "replication_key": replication_key,
-            "schema_name": schema_name,
-            "table_name": table_name,
-        })
+        select_sql = sync_common.get_select_latest_sql(
+            {
+                "escaped_columns": [column_name],
+                "replication_key": replication_key,
+                "schema_name": schema_name,
+                "table_name": table_name,
+            }
+        )
 
         with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
             cur.execute(select_sql)
@@ -263,7 +255,13 @@ class FastSyncRdsStrategy:
         return None
 
     def _track_latest_replication_key_value(  # pylint: disable=invalid-name,too-many-arguments,too-many-positional-arguments
-        self, state, stream, conn, schema_name: str, table_name: str, replication_key: str
+        self,
+        state,
+        stream,
+        conn,
+        schema_name: str,
+        table_name: str,
+        replication_key: str,
     ):
         """Track the latest replication key value in state"""
         if not replication_key:
@@ -285,9 +283,9 @@ class FastSyncRdsStrategy:
 
             state = singer.write_bookmark(
                 state,
-                stream['tap_stream_id'],
-                'replication_key_value',
-                replication_key_value_str
+                stream["tap_stream_id"],
+                "replication_key_value",
+                replication_key_value_str,
             )
 
         return state
@@ -300,7 +298,7 @@ class FastSyncRdsStrategy:
         md_map: Dict,
         replication_method: str,
         replication_key: Optional[str] = None,
-        replication_key_value: Optional[str] = None
+        replication_key_value: Optional[str] = None,
     ) -> Dict:
         """
         Sync table using fast sync RDS strategy
@@ -310,7 +308,7 @@ class FastSyncRdsStrategy:
             state: State dictionary
             desired_columns: List of columns to sync
             md_map: Metadata map
-            replication_method: Replication method ('FULL_TABLE' or 'INCREMENTAL')
+            replication_method: Replication method ("FULL_TABLE" or "INCREMENTAL")
             replication_key: Optional replication key for incremental sync
             replication_key_value: Optional replication key value
 
@@ -321,22 +319,24 @@ class FastSyncRdsStrategy:
         stream_version = self._get_stream_version(state, stream)
 
         state = singer.write_bookmark(
-            state,
-            stream['tap_stream_id'],
-            'version',
-            stream_version
+            state, stream["tap_stream_id"], "version", stream_version
         )
 
-        schema_name = md_map.get(()).get('schema-name')
-        table_name = stream['table_name']
+        schema_name = md_map.get(()).get("schema-name")
+        table_name = stream["table_name"]
 
         replication_key_sql_datatype = None
         if replication_key:
-            replication_key_sql_datatype = md_map.get(('properties', replication_key)).get('sql-datatype')
+            replication_key_sql_datatype = md_map.get(
+                ("properties", replication_key)
+            ).get("sql-datatype")
 
         LOGGER.info(
             "Singer bookmark data: %s",
-            {"replication_key": replication_key, "replication_key_value": replication_key_value}
+            {
+                "replication_key": replication_key,
+                "replication_key_value": replication_key_value,
+            },
         )
 
         query = self._build_select_query(
@@ -346,7 +346,7 @@ class FastSyncRdsStrategy:
             md_map=md_map,
             replication_key=replication_key,
             replication_key_value=replication_key_value,
-            replication_key_sql_datatype=replication_key_sql_datatype
+            replication_key_sql_datatype=replication_key_sql_datatype,
         )
 
         s3_path = self._generate_s3_path(schema_name, table_name)
@@ -357,13 +357,16 @@ class FastSyncRdsStrategy:
                 # to avoid missing records on the next incremental run, since
                 # the export query might take a long time to complete.
                 state = self._track_latest_replication_key_value(
-                    state, stream, conn, schema_name, table_name,
-                    replication_key
+                    state, stream, conn, schema_name, table_name, replication_key
                 )
 
-                self._export_and_send_s3_info(
-                    conn, stream, md_map, query, s3_path, stream_version,
-                    time_extracted, replication_method
+                s3_info = self._export_to_s3_and_get_info(
+                    conn, query, s3_path, time_extracted, replication_method
+                )
+
+                # Store S3 info in state bookmarks for target to read from STATE message
+                state = singer.write_bookmark(
+                    state, stream["tap_stream_id"], "fast_sync_s3_info", s3_info
                 )
 
         except Exception as exc:
@@ -373,21 +376,17 @@ class FastSyncRdsStrategy:
         singer.write_message(singer.StateMessage(value=copy.deepcopy(state)))
         activate_version_message = singer.ActivateVersionMessage(
             stream=post_db.calculate_destination_stream_name(stream, md_map),
-            version=stream_version
+            version=stream_version,
         )
         singer.write_message(activate_version_message)
 
         return state
 
     def sync_table_full(
-        self,
-        stream: Dict,
-        state: Dict,
-        desired_columns: List[str],
-        md_map: Dict
+        self, stream: Dict, state: Dict, desired_columns: List[str], md_map: Dict
     ) -> Dict:
         """Sync table using full table replication method"""
-        return self.sync_table(stream, state, desired_columns, md_map, 'FULL_TABLE')
+        return self.sync_table(stream, state, desired_columns, md_map, "FULL_TABLE")
 
     def sync_table_incremental(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
@@ -396,10 +395,15 @@ class FastSyncRdsStrategy:
         desired_columns: List[str],
         md_map: Dict,
         replication_key: str,
-        replication_key_value: str
+        replication_key_value: str,
     ) -> Dict:
         """Sync table using incremental replication method"""
         return self.sync_table(
-            stream, state, desired_columns, md_map, 'INCREMENTAL',
-            replication_key, replication_key_value
+            stream,
+            state,
+            desired_columns,
+            md_map,
+            "INCREMENTAL",
+            replication_key,
+            replication_key_value,
         )

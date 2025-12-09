@@ -11,7 +11,7 @@ from singer import metrics
 import tap_postgres.db as post_db
 import tap_postgres.sync_strategies.common as sync_common
 
-LOGGER = singer.get_logger('tap_postgres')
+LOGGER = singer.get_logger("tap_postgres")
 
 UPDATE_BOOKMARK_PERIOD = 10000
 
@@ -36,34 +36,42 @@ def fetch_max_replication_key(conn_config, replication_key, schema_name, table_n
 def sync_table(conn_info, stream, state, desired_columns, md_map):
     time_extracted = utils.now()
 
-    stream_version = singer.get_bookmark(state, stream['tap_stream_id'], 'version')
+    stream_version = singer.get_bookmark(state, stream["tap_stream_id"], "version")
     if stream_version is None:
         stream_version = int(time.time() * 1000)
 
-    state = singer.write_bookmark(state,
-                                  stream['tap_stream_id'],
-                                  'version',
-                                  stream_version)
+    state = singer.write_bookmark(
+        state, stream["tap_stream_id"], "version", stream_version
+    )
     singer.write_message(singer.StateMessage(value=copy.deepcopy(state)))
 
-    schema_name = md_map.get(()).get('schema-name')
+    schema_name = md_map.get(()).get("schema-name")
 
-    escaped_columns = list(map(partial(post_db.prepare_columns_for_select_sql, md_map=md_map), desired_columns))
+    escaped_columns = list(
+        map(
+            partial(post_db.prepare_columns_for_select_sql, md_map=md_map),
+            desired_columns,
+        )
+    )
 
     activate_version_message = singer.ActivateVersionMessage(
         stream=post_db.calculate_destination_stream_name(stream, md_map),
-        version=stream_version)
+        version=stream_version,
+    )
 
     singer.write_message(activate_version_message)
 
-    replication_key = md_map.get((), {}).get('replication-key')
-    replication_key_value = singer.get_bookmark(state, stream['tap_stream_id'], 'replication_key_value')
-    replication_key_sql_datatype = md_map.get(('properties', replication_key)).get('sql-datatype')
+    replication_key = md_map.get((), {}).get("replication-key")
+    replication_key_value = singer.get_bookmark(
+        state, stream["tap_stream_id"], "replication_key_value"
+    )
+    replication_key_sql_datatype = md_map.get(("properties", replication_key)).get(
+        "sql-datatype"
+    )
 
     hstore_available = post_db.hstore_available(conn_info)
     with metrics.record_counter(None) as counter:
         with post_db.open_connection(conn_info) as conn:
-
             # Client side character encoding defaults to the value in postgresql.conf under client_encoding.
             # The server / db can also have its own configured encoding.
             with conn.cursor() as cur:
@@ -78,73 +86,97 @@ def sync_table(conn_info, stream, state, desired_columns, md_map):
             else:
                 LOGGER.info("hstore is UNavailable")
 
-            cursor_name = "pipelinewise_{}".format(stream['table_name'])
-            with conn.cursor(cursor_factory=psycopg2.extras.DictCursor, name=cursor_name) as cur:
+            cursor_name = "pipelinewise_{}".format(stream["table_name"])
+            with conn.cursor(
+                cursor_factory=psycopg2.extras.DictCursor, name=cursor_name
+            ) as cur:
                 cur.itersize = post_db.CURSOR_ITER_SIZE
-                LOGGER.info("Beginning new incremental replication sync %s", stream_version)
-                select_sql = sync_common.get_query_for_replication_data({"escaped_columns": escaped_columns,
-                                              "replication_key": replication_key,
-                                              "replication_key_sql_datatype": replication_key_sql_datatype,
-                                              "replication_key_value": replication_key_value,
-                                              "schema_name": schema_name,
-                                              "table_name": stream['table_name'],
-                                              "limit": conn_info['limit'],
-                                              "skip_last_n_seconds": conn_info['skip_last_n_seconds'],
-                                              "look_back_n_seconds": conn_info['look_back_n_seconds'],
-                                              "recover_mappings": conn_info['recover_mappings'],
-                                              })
-                LOGGER.info('select statement: %s with itersize %s', select_sql, cur.itersize)
+                LOGGER.info(
+                    "Beginning new incremental replication sync %s", stream_version
+                )
+                select_sql = sync_common.get_query_for_replication_data(
+                    {
+                        "escaped_columns": escaped_columns,
+                        "replication_key": replication_key,
+                        "replication_key_sql_datatype": replication_key_sql_datatype,
+                        "replication_key_value": replication_key_value,
+                        "schema_name": schema_name,
+                        "table_name": stream["table_name"],
+                        "limit": conn_info["limit"],
+                        "skip_last_n_seconds": conn_info["skip_last_n_seconds"],
+                        "look_back_n_seconds": conn_info["look_back_n_seconds"],
+                        "recover_mappings": conn_info["recover_mappings"],
+                    }
+                )
+                LOGGER.info(
+                    "select statement: %s with itersize %s", select_sql, cur.itersize
+                )
                 cur.execute(select_sql)
 
                 rows_saved = 0
 
                 for rec in cur:
-                    record_message = post_db.selected_row_to_singer_message(stream,
-                                                                            rec,
-                                                                            stream_version,
-                                                                            desired_columns,
-                                                                            time_extracted,
-                                                                            md_map)
+                    record_message = post_db.selected_row_to_singer_message(
+                        stream,
+                        rec,
+                        stream_version,
+                        desired_columns,
+                        time_extracted,
+                        md_map,
+                    )
 
                     singer.write_message(record_message)
                     rows_saved += 1
 
-                    #Picking a replication_key with NULL values will result in it ALWAYS been synced which is not great
-                    #event worse would be allowing the NULL value to enter into the state
+                    # Picking a replication_key with NULL values will result in it ALWAYS been synced which is not great
+                    # event worse would be allowing the NULL value to enter into the state
                     if record_message.record[replication_key] is not None:
-                        state = singer.write_bookmark(state,
-                                                      stream['tap_stream_id'],
-                                                      'replication_key_value',
-                                                      record_message.record[replication_key])
+                        state = singer.write_bookmark(
+                            state,
+                            stream["tap_stream_id"],
+                            "replication_key_value",
+                            record_message.record[replication_key],
+                        )
 
                     if rows_saved % UPDATE_BOOKMARK_PERIOD == 0:
-                        singer.write_message(singer.StateMessage(value=copy.deepcopy(state)))
+                        singer.write_message(
+                            singer.StateMessage(value=copy.deepcopy(state))
+                        )
 
                     counter.increment()
 
-            with conn.cursor(cursor_factory=psycopg2.extras.DictCursor, name=cursor_name) as cur:
+            with conn.cursor(
+                cursor_factory=psycopg2.extras.DictCursor, name=cursor_name
+            ) as cur:
                 if rows_saved == 0:
-                    latest_sql = sync_common.get_select_latest_sql({"escaped_columns": escaped_columns,
-                                              "replication_key": replication_key,
-                                              "schema_name": schema_name,
-                                              "table_name": stream['table_name'],
-                                            })
-                    LOGGER.info('select latest row statement: %s', latest_sql)
+                    latest_sql = sync_common.get_select_latest_sql(
+                        {
+                            "escaped_columns": escaped_columns,
+                            "replication_key": replication_key,
+                            "schema_name": schema_name,
+                            "table_name": stream["table_name"],
+                        }
+                    )
+                    LOGGER.info("select latest row statement: %s", latest_sql)
                     cur.execute(latest_sql)
                     rec = cur.fetchone()
                     if rec:
                         LOGGER.info(f"The latest record of the table is: {rec}")
-                        record_message = post_db.selected_row_to_singer_message(stream,
-                                                                                rec,
-                                                                                stream_version,
-                                                                                desired_columns,
-                                                                                time_extracted,
-                                                                                md_map)
+                        record_message = post_db.selected_row_to_singer_message(
+                            stream,
+                            rec,
+                            stream_version,
+                            desired_columns,
+                            time_extracted,
+                            md_map,
+                        )
                         singer.write_message(record_message)
                         if record_message.record[replication_key] is not None:
-                            state = singer.write_bookmark(state,
-                                                        stream['tap_stream_id'],
-                                                        'replication_key_value',
-                                                        record_message.record[replication_key])
+                            state = singer.write_bookmark(
+                                state,
+                                stream["tap_stream_id"],
+                                "replication_key_value",
+                                record_message.record[replication_key],
+                            )
 
     return state

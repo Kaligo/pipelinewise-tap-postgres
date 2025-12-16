@@ -131,7 +131,7 @@ class FastSyncRdsStrategy:
 
         Note: aws_s3.query_export_to_s3 automatically splits large exports into
         multiple files (~6GB each) with naming pattern: path, path_part2, path_part3, etc.
-        Only the first file includes CSV headers.
+        CSV files are exported without headers.
         """
         # Escape all values to prevent SQL injection and syntax errors.
         escaped_query = sync_common.escape_sql_string(query)
@@ -149,7 +149,7 @@ class FastSyncRdsStrategy:
                 '{escaped_path}',
                 '{escaped_region}'
             ),
-            'format csv, header true'
+            'format csv'
         )
         """
 

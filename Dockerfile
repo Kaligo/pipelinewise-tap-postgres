@@ -1,14 +1,20 @@
-FROM docker.io/bitnami/postgresql:12
+FROM postgres:12
 
 USER root
 
+# Install build dependencies and wal2json
 RUN apt-get update \
-    && apt-get -y install git build-essential \
-    && git clone --depth 1 --branch wal2json_2_3 https://github.com/eulerto/wal2json.git \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        git \
+        build-essential \
+        postgresql-server-dev-12 \
+    && git clone --depth 1 --branch wal2json_2_3 https://github.com/eulerto/wal2json.git /wal2json \
     && cd /wal2json \
     && make && make install \
     && cd / \
     && rm -rf wal2json \
-    && rm -r /var/lib/apt/lists /var/cache/apt/archives
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
-USER 1001
+USER postgres

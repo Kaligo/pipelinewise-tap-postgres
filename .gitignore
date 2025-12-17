@@ -113,3 +113,7 @@ config.json
 
 # JetBrains IDEs
 .idea/*
+
+# Temp
+.DS_Store
+tmp/

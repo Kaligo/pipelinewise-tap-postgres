@@ -7,7 +7,7 @@ with open("README.md") as f:
 
 setup(
     name="pipelinewise-tap-postgres",
-    version="2.1.0",
+    version="2.2.1",
     description="Singer.io tap for extracting data from PostgresSQL - PipelineWise compatible",
     long_description=long_description,
     long_description_content_type="text/markdown",

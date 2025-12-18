@@ -72,27 +72,26 @@ def refresh_streams_schema(conn_config: Dict, streams: List[Dict]):
             for stream in discover_db(conn, conn_config.get('filter_schemas'), [st['table_name'] for st in streams])
         }
 
-        LOGGER.debug('New discovery schemas %s', new_discovery)
+    LOGGER.debug('New discovery schemas %s', new_discovery)
 
-        # For every stream dictionary, update the schema and metadata from the new discovery
-        for idx, stream in enumerate(streams):
-            # update schema
-            streams[idx]['schema'] = copy.deepcopy(new_discovery[stream['tap_stream_id']]['schema'])
+    # For every stream dictionary, update the schema and metadata from the new discovery
+    for idx, stream in enumerate(streams):
+        # update schema
+        streams[idx]['schema'] = copy.deepcopy(new_discovery[stream['tap_stream_id']]['schema'])
 
-            # Update metadata
-            #
-            # 1st step: new discovery doesn't contain non-discoverable metadata: e.g replication method & key, selected
-            # so let's copy those from the original stream object
-            md_map = metadata.to_map(stream['metadata'])
-            meta = md_map.get(())
+        origina_metadata_map = metadata.to_map(stream['metadata'])
+        discovered_metadata_map = metadata.to_map(new_discovery[stream['tap_stream_id']]['metadata'])
 
-            for idx_met, metadatum in enumerate(new_discovery[stream['tap_stream_id']]['metadata']):
-                if not metadatum['breadcrumb']:
-                    meta.update(new_discovery[stream['tap_stream_id']]['metadata'][idx_met]['metadata'])
-                    new_discovery[stream['tap_stream_id']]['metadata'][idx_met]['metadata'] = meta
+        for metadata_key, metadata_value in discovered_metadata_map.items():
+            # Prevere existing metadata configured in YAML over newly discovered metadata
+            if metadata_key in origina_metadata_map:
+                origina_metadata_map[metadata_key].update(metadata_value)
+            else:
+                origina_metadata_map[metadata_key] = metadata_value
 
-            # 2nd step: now copy all the metadata from the updated new discovery to the original stream
-            streams[idx]['metadata'] = copy.deepcopy(new_discovery[stream['tap_stream_id']]['metadata'])
+        merged_metadata = metadata.to_list(origina_metadata_map)
+
+        streams[idx]['metadata'] = copy.deepcopy(merged_metadata)
 
     LOGGER.debug('Updated streams schemas %s', streams)
 

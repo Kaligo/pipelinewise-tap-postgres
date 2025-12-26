@@ -364,10 +364,11 @@ class FastSyncRdsStrategy:
                     conn, query, s3_path, time_extracted, replication_method
                 )
 
-                # Store S3 info in state bookmarks for target to read from STATE message
-                state = singer.write_bookmark(
-                    state, stream["tap_stream_id"], "fast_sync_s3_info", s3_info
-                )
+                if s3_info["rows_uploaded"] > 0:
+                    # Store S3 info in state bookmarks for target to read from STATE message
+                    state = singer.write_bookmark(
+                        state, stream["tap_stream_id"], "fast_sync_s3_info", s3_info
+                    )
 
         except Exception as exc:
             LOGGER.error("Failed to export to S3: %s", str(exc))

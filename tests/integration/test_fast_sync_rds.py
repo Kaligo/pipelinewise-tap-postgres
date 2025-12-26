@@ -259,7 +259,7 @@ class TestFastSyncRds(unittest.TestCase):
         self.assertEqual(s3_info2["replication_method"], "INCREMENTAL")
 
     def test_fast_sync_rds_empty_table(self):
-        """Test fast_sync_rds with empty table"""
+        """Test fast_sync_rds with empty table - S3 info should not be stored when rows_uploaded is 0"""
         test_stream = self._get_test_stream()
         test_stream = set_replication_method_for_stream(test_stream, "FULL_TABLE")
 
@@ -270,20 +270,39 @@ class TestFastSyncRds(unittest.TestCase):
                 self.config, {"streams": [test_stream]}, "FULL_TABLE", {}, None
             )
 
-        # Verify fast_sync_s3_info is embedded in STATE message even with 0 rows
+        # Verify STATE message is still sent (sync occurred)
         output = my_stdout.getvalue()
         self.assertIn('"type": "STATE"', output)
 
         stream_id = f"public-{self.table_name}"
+
+        # Verify fast_sync_s3_info is NOT stored when rows_uploaded is 0
+        # (no need to store S3 info if there's no data to load)
         state_with_s3_info = self._find_state_with_s3_info(output, stream_id)
-        self.assertIsNotNone(
-            state_with_s3_info, "No STATE message found with fast_sync_s3_info"
+        self.assertIsNone(
+            state_with_s3_info,
+            "fast_sync_s3_info should not be stored when rows_uploaded is 0"
         )
-        s3_info = state_with_s3_info["value"]["bookmarks"][stream_id][
-            "fast_sync_s3_info"
+
+        # Verify STATE message still exists with version (sync still occurred)
+        lines = output.strip().split("\n")
+        state_messages = [
+            json.loads(line) for line in lines if '"type": "STATE"' in line
         ]
-        self.assertEqual(s3_info["rows_uploaded"], 0)
-        self.assertEqual(s3_info["bytes_uploaded"], 0)
+        state_found = False
+        for state_msg in state_messages:
+            if (
+                state_msg.get("type") == "STATE"
+                and "bookmarks" in state_msg.get("value", {})
+                and stream_id in state_msg["value"]["bookmarks"]
+            ):
+                state_found = True
+                # Verify version is present but fast_sync_s3_info is not
+                stream_bookmarks = state_msg["value"]["bookmarks"][stream_id]
+                self.assertIn("version", stream_bookmarks)
+                self.assertNotIn("fast_sync_s3_info", stream_bookmarks)
+                break
+        self.assertTrue(state_found, "STATE message should exist even for empty table")
 
     def test_fast_sync_rds_multiple_files_uploaded(self):
         """Test fast_sync_rds with multiple files (file splitting scenario)"""

@@ -144,14 +144,14 @@ class TestFastSyncRds(TestCase):
         # Verify metadata columns are in the query (tests _prepend_metadata_columns indirectly)
         export_query = self._extract_export_query(mock_cursor)
         self.assertIsNotNone(export_query)
-        self.assertIn("_SDC_BATCHED_AT", export_query)
-        self.assertIn("_SDC_DELETED_AT", export_query)
-        self.assertIn("_SDC_EXTRACTED_AT", export_query)
+        self.assertIn("_sdc_batched_at", export_query)
+        self.assertIn("_sdc_deleted_at", export_query)
+        self.assertIn("_sdc_extracted_at", export_query)
 
-        # Verify metadata columns order
-        batched_pos = export_query.find("_SDC_BATCHED_AT")
-        deleted_pos = export_query.find("_SDC_DELETED_AT")
-        extracted_pos = export_query.find("_SDC_EXTRACTED_AT")
+        # Verify metadata columns are present and in correct order
+        batched_pos = export_query.find("_sdc_batched_at")
+        deleted_pos = export_query.find("_sdc_deleted_at")
+        extracted_pos = export_query.find("_sdc_extracted_at")
         id_pos = export_query.find('"id"')
 
         self.assertGreater(batched_pos, 0)
@@ -159,6 +159,65 @@ class TestFastSyncRds(TestCase):
         self.assertGreater(extracted_pos, deleted_pos)
         if id_pos > 0:
             self.assertGreater(id_pos, extracted_pos)
+
+    @patch("tap_postgres.sync_strategies.fast_sync_rds.post_db.open_connection")
+    def test_sync_table_full_column_ordering(self, mock_open_conn):
+        """Test sync_table_full orders columns alphabetically including metadata columns"""
+        desired_columns = ["zebra", "_id", "active"]
+        md_map_with_columns = {
+            (): {"schema-name": "test_schema"},
+            ("properties", "_id"): {"sql-datatype": "integer"},
+            ("properties", "active"): {"sql-datatype": "boolean"},
+            ("properties", "zebra"): {"sql-datatype": "varchar"},
+        }
+
+        mock_conn, mock_cursor = self._setup_mock_connection()
+        mock_open_conn.return_value.__enter__.return_value = mock_conn
+
+        self.fast_sync_rds_strategy.sync_table_full(
+            stream=self.stream,
+            state=self.state,
+            desired_columns=desired_columns,
+            md_map=md_map_with_columns,
+        )
+
+        # Verify export query contains all columns
+        export_query = self._extract_export_query(mock_cursor)
+        self.assertIsNotNone(export_query)
+        self.assertIn("_sdc_batched_at", export_query)
+        self.assertIn("_sdc_deleted_at", export_query)
+        self.assertIn("_sdc_extracted_at", export_query)
+        self.assertIn('"_id"', export_query)
+        self.assertIn('"active"', export_query)
+        self.assertIn('"zebra"', export_query)
+
+        # Verify complete column ordering: all columns should be sorted alphabetically
+        # Expected order: _id, _sdc_batched_at, _sdc_deleted_at, _sdc_extracted_at, active, zebra
+        expected_columns = [
+            '"_id"',
+            "_sdc_batched_at",
+            "_sdc_deleted_at",
+            "_sdc_extracted_at",
+            '"active"',
+            '"zebra"',
+        ]
+
+        # Find positions of all columns
+        column_positions = [export_query.find(col) for col in expected_columns]
+
+        self.assertEqual(len(column_positions), len(expected_columns))
+
+        # Verify all columns are found
+        for i, (col, pos) in enumerate(zip(expected_columns, column_positions)):
+            self.assertGreater(pos, 0, f"{col} should be found in query")
+
+        # Verify columns are in correct order (positions should be ascending)
+        self.assertEqual(
+            column_positions,
+            sorted(column_positions),
+            f"Columns should be in alphabetical order. Found positions: {dict(zip(expected_columns, column_positions))}",
+        )
+
 
     @patch("tap_postgres.sync_strategies.fast_sync_rds.post_db.open_connection")
     def test_sync_table_full_no_prefix(self, mock_open_conn):
@@ -205,9 +264,9 @@ class TestFastSyncRds(TestCase):
         # Verify metadata columns are NOT in the query
         export_query = self._extract_export_query(mock_cursor)
         self.assertIsNotNone(export_query)
-        self.assertNotIn("_SDC_BATCHED_AT", export_query)
-        self.assertNotIn("_SDC_DELETED_AT", export_query)
-        self.assertNotIn("_SDC_EXTRACTED_AT", export_query)
+        self.assertNotIn("_sdc_batched_at", export_query)
+        self.assertNotIn("_sdc_deleted_at", export_query)
+        self.assertNotIn("_sdc_extracted_at", export_query)
 
     @patch("tap_postgres.sync_strategies.fast_sync_rds.post_db.open_connection")
     @patch("tap_postgres.sync_strategies.fast_sync_rds.singer.get_bookmark")

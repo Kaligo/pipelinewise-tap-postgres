@@ -342,7 +342,7 @@ class TestFastSyncRds(TestCase):
 
     @patch("tap_postgres.sync_strategies.fast_sync_rds.post_db.open_connection")
     def test_sync_table_full_empty_table(self, mock_open_conn):
-        """Test sync_table_full with empty table (0 rows)"""
+        """Test sync_table_full with empty table (0 rows) - S3 info should not be stored"""
         mock_conn, _ = self._setup_mock_connection(
             export_result=self._create_mock_export_result(rows=0, bytes_uploaded=0)
         )
@@ -355,10 +355,33 @@ class TestFastSyncRds(TestCase):
             md_map=self.md_map,
         )
 
-        # Verify S3 info is still embedded in state even with 0 rows
-        s3_info = state["bookmarks"][self.stream["tap_stream_id"]]["fast_sync_s3_info"]
-        self.assertEqual(s3_info["rows_uploaded"], 0)
-        self.assertEqual(s3_info["bytes_uploaded"], 0)
+        # Verify S3 info is NOT stored in state when rows_uploaded is 0
+        # (no need to store S3 info if there's no data to load)
+        stream_bookmarks = state["bookmarks"][self.stream["tap_stream_id"]]
+        self.assertNotIn("fast_sync_s3_info", stream_bookmarks)
+
+        # Verify state still has version (sync still occurred)
+        self.assertIn("version", stream_bookmarks)
+
+    @patch("tap_postgres.sync_strategies.fast_sync_rds.post_db.open_connection")
+    def test_sync_table_full_single_row(self, mock_open_conn):
+        """Test sync_table_full with single row - verifies S3 info is stored when rows_uploaded > 0"""
+        mock_conn, _ = self._setup_mock_connection(
+            export_result=self._create_mock_export_result(rows=1, bytes_uploaded=100)
+        )
+        mock_open_conn.return_value.__enter__.return_value = mock_conn
+
+        state = self.fast_sync_rds_strategy.sync_table_full(
+            stream=self.stream,
+            state=self.state,
+            desired_columns=self.desired_columns,
+            md_map=self.md_map,
+        )
+
+        # Verify S3 info IS stored in state when rows_uploaded > 0 (even for single row)
+        self._assert_s3_info_in_state(
+            state, self.stream["tap_stream_id"], expected_rows=1, expected_bytes=100
+        )
 
     @patch("tap_postgres.incremental.sync_table")
     @patch("tap_postgres.sync_common.send_schema_message")

@@ -291,3 +291,24 @@ Install python dependencies and run python linter
   make venv
   make pylint
 ```
+
+### To integrate and run this locally with the Meltano project:
+
+- Use `file://` as the `pip_url` to install the plugin from the local directory.
+- Run `meltano install` again to re-install it.
+
+```yaml
+# In extract/extractors.meltano.yml
+plugins:
+  extractors:
+  - name: tap-postgres
+    variant: transferwise
+    inherit_from: tap-postgres
+    pip_url: file:///home/dev/pipelinewise-tap-postgres
+```
+
+### To create a GH release:
+
+```
+gh release create v2.2.2 --generate-notes --repo Kaligo/pipelinewise-tap-postgres
+```

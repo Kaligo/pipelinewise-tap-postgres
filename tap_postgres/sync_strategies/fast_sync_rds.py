@@ -11,7 +11,6 @@ import copy
 import datetime
 import time
 import uuid
-from functools import partial
 from typing import Dict, List, Optional
 
 import psycopg2
@@ -25,6 +24,9 @@ import tap_postgres.db as post_db
 import tap_postgres.sync_strategies.common as sync_common
 
 LOGGER = singer.get_logger("tap_postgres")
+
+# It's important to use lowercase to match the default column order.
+METADATA_COLUMNS = {"_sdc_batched_at", "_sdc_deleted_at", "_sdc_extracted_at"}
 
 
 class FastSyncRdsStrategy:
@@ -71,21 +73,54 @@ class FastSyncRdsStrategy:
         # Remove leading slash if prefix is empty to avoid double slashes
         return path.lstrip("/")
 
-    def _prepend_metadata_columns(
-        self, columns: Optional[List[str]] = None
-    ) -> List[str]:
-        # Metadata columns need to go first in the same order with
-        # pipelinewise-target-redshift/target_redshift/__init__.py#add_metadata_columns_to_schema
-        if columns is None:
-            columns = []
+    def _get_metadata_column_names(self) -> List[str]:
         if self.conn_config.get("fast_sync_rds_add_metadata_columns", True):
-            columns[:0] = [
-                "NOW() AT TIME ZONE 'UTC' AS _SDC_BATCHED_AT",
-                "NULL AS _SDC_DELETED_AT",
-                "NOW() AT TIME ZONE 'UTC' AS _SDC_EXTRACTED_AT",
-            ]
+            return METADATA_COLUMNS
+        return []
 
-        return columns
+    def _get_metadata_column_sql(self, column_name: str) -> str:
+        """Get SQL expression for a metadata column."""
+        # Handle both lowercase and uppercase column names
+        column_name_lower = column_name.lower()
+
+        metadata_sql_map = {
+            "_sdc_batched_at": "current_timestamp at time zone 'UTC' as _sdc_batched_at",
+            "_sdc_deleted_at": "null as _sdc_deleted_at",
+            "_sdc_extracted_at": "current_timestamp at time zone 'UTC' as _sdc_extracted_at",
+        }
+
+        if column_name_lower in metadata_sql_map:
+            return metadata_sql_map[column_name_lower]
+
+        raise ValueError(f"Unknown metadata column: {column_name}")
+
+    def _build_sorted_column_expressions(
+        self, desired_columns: List[str], md_map: Dict
+    ) -> List[str]:
+        """
+        Build SQL expressions for all columns (metadata + desired) in sorted order.
+
+        Columns are sorted alphabetically to match target's schema order.
+        This ensures the exported data column order matches the table column
+        order exactly.
+
+        Args:
+            desired_columns: List of desired column names from the source table
+            md_map: Metadata map for column transformations
+
+        Returns:
+            List of SQL expressions for columns in sorted order
+        """
+        metadata_column_names = self._get_metadata_column_names()
+        all_column_names = [*metadata_column_names, *desired_columns]
+        # Sort columns to ensure the output CSV headers match target's schema order.
+        all_column_names.sort()
+
+        return [
+            self._get_metadata_column_sql(name) if name in metadata_column_names
+            else post_db.prepare_columns_for_select_sql(name, md_map=md_map)
+            for name in all_column_names
+        ]
 
     def _build_select_query(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
@@ -97,14 +132,7 @@ class FastSyncRdsStrategy:
         replication_key_value: Optional[str] = None,
         replication_key_sql_datatype: Optional[str] = None,
     ) -> str:
-        columns = self._prepend_metadata_columns([])
-        escaped_columns = list(
-            map(
-                partial(post_db.prepare_columns_for_select_sql, md_map=md_map),
-                desired_columns,
-            )
-        )
-        columns.extend(escaped_columns)
+        columns = self._build_sorted_column_expressions(desired_columns, md_map)
 
         return sync_common.get_query_for_replication_data(
             {

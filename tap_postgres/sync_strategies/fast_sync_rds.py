@@ -94,6 +94,34 @@ class FastSyncRdsStrategy:
 
         raise ValueError(f"Unknown metadata column: {column_name}")
 
+    def _is_array_column(self, column_name: str, md_map: Dict) -> bool:
+        """
+        Check if a column is an array type based on metadata map.
+        """
+        column_metadata = md_map.get(("properties", column_name), {})
+        sql_datatype = column_metadata.get("sql-datatype", "")
+        # Array types in PostgreSQL have '[]' suffix in sql-datatype
+        return sql_datatype.endswith("[]")
+
+    def _convert_array_column_to_json(self, column_name: str) -> str:
+        """
+        Convert an array column to JSON format using PostgreSQL's array_to_json function.
+
+        This converts PostgreSQL array format (e.g., {fashion}) to JSON format (e.g., ["fashion"]).
+        The conversion happens before CSV export, so the exported CSV will contain JSON arrays
+        instead of PostgreSQL array format.
+
+        Args:
+            column_name: Column name to convert
+
+        Returns:
+            SQL expression that converts array to JSON format
+        """
+        column_identifier = post_db.prepare_columns_sql(column_name)
+        # array_to_json converts PostgreSQL arrays to JSON arrays
+        # Returns NULL for NULL arrays (which is correct)
+        return f"array_to_json({column_identifier}) AS {column_identifier}"
+
     def _build_sorted_column_expressions(
         self, desired_columns: List[str], md_map: Dict
     ) -> List[str]:
@@ -103,6 +131,9 @@ class FastSyncRdsStrategy:
         Columns are sorted alphabetically to match target's schema order.
         This ensures the exported data column order matches the table column
         order exactly.
+
+        Array columns are automatically converted from PostgreSQL array format
+        (e.g., {fashion}) to JSON format (e.g., ["fashion"]) using array_to_json().
 
         Args:
             desired_columns: List of desired column names from the source table
@@ -116,11 +147,18 @@ class FastSyncRdsStrategy:
         # Sort columns to ensure the output CSV headers match target's schema order.
         all_column_names.sort()
 
-        return [
-            self._get_metadata_column_sql(name) if name in metadata_column_names
-            else post_db.prepare_columns_for_select_sql(name, md_map=md_map)
-            for name in all_column_names
-        ]
+        column_expressions = []
+        for name in all_column_names:
+            if name in metadata_column_names:
+                column_expressions.append(self._get_metadata_column_sql(name))
+            elif self._is_array_column(name, md_map):
+                column_expressions.append(self._convert_array_column_to_json(name))
+            else:
+                column_expressions.append(
+                    post_db.prepare_columns_for_select_sql(name, md_map=md_map)
+                )
+
+        return column_expressions
 
     def _build_select_query(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,

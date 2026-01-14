@@ -218,7 +218,6 @@ class TestFastSyncRds(TestCase):
             f"Columns should be in alphabetical order. Found positions: {dict(zip(expected_columns, column_positions))}",
         )
 
-
     @patch("tap_postgres.sync_strategies.fast_sync_rds.post_db.open_connection")
     def test_sync_table_full_no_prefix(self, mock_open_conn):
         """Test sync_table_full with empty prefix - verifies S3 path generation"""
@@ -532,4 +531,142 @@ class TestFastSyncRds(TestCase):
         # Verify fast_sync_s3_info is still in state (not removed, just ignored)
         self.assertIn(
             "fast_sync_s3_info", result["bookmarks"]["test_schema-test_table"]
+        )
+
+    @patch("tap_postgres.sync_strategies.fast_sync_rds.post_db.open_connection")
+    def test_sync_table_full_with_array_columns(self, mock_open_conn):
+        """Test sync_table_full converts array columns to JSON format in export query"""
+        # Test with mixed array types (text, integer, date, timestamp) and non-array columns
+        desired_columns = ["id", "_text", "name", "_date", "_int", "_timestamp"]
+        md_map_with_arrays = {
+            (): {"schema-name": "test_schema"},
+            ("properties", "id"): {"sql-datatype": "integer"},
+            ("properties", "_text"): {"sql-datatype": "text[]"},
+            ("properties", "name"): {"sql-datatype": "varchar"},
+            ("properties", "_date"): {"sql-datatype": "date[]"},
+            ("properties", "_int"): {"sql-datatype": "integer[]"},
+            ("properties", "_timestamp"): {
+                "sql-datatype": "timestamp without time zone[]"
+            },
+        }
+
+        mock_conn, mock_cursor = self._setup_mock_connection()
+        mock_open_conn.return_value.__enter__.return_value = mock_conn
+
+        self.fast_sync_rds_strategy.sync_table_full(
+            stream=self.stream,
+            state=self.state,
+            desired_columns=desired_columns,
+            md_map=md_map_with_arrays,
+        )
+
+        # Verify export query contains array_to_json for array columns
+        export_query = self._extract_export_query(mock_cursor)
+        self.assertIsNotNone(export_query)
+
+        # Array columns should use array_to_json conversion
+        self.assertIn("array_to_json", export_query)
+
+        # Count array_to_json occurrences - should match number of array columns
+        array_columns = ["_text", "_date", "_int", "_timestamp"]
+        array_to_json_count = export_query.count("array_to_json")
+        self.assertEqual(
+            array_to_json_count,
+            len(array_columns),
+            "All array columns should use array_to_json",
+        )
+
+        # Verify each array column is present and wrapped with array_to_json
+        # (accounting for possible whitespace variations in SQL formatting)
+        for col in array_columns:
+            self.assertIn(col, export_query)
+            self.assertRegex(
+                export_query,
+                rf'array_to_json\s*\(\s*["\s]*{col}["\s]*\)',
+                f"Array column '{col}' should be wrapped with array_to_json",
+            )
+
+        # Non-array columns should not be wrapped with array_to_json
+        non_array_columns = ["id", "name"]
+        for col in non_array_columns:
+            self.assertIn(f'"{col}"', export_query)
+            # Verify they are not wrapped
+            self.assertNotRegex(
+                export_query,
+                rf'array_to_json\s*\(\s*["\s]*{col}["\s]*\)',
+                f"Non-array column '{col}' should not use array_to_json",
+            )
+
+    @patch("tap_postgres.sync_strategies.fast_sync_rds.post_db.open_connection")
+    @patch("tap_postgres.sync_strategies.fast_sync_rds.singer.get_bookmark")
+    def test_sync_table_incremental_with_array_columns(
+        self, mock_get_bookmark, mock_open_conn
+    ):
+        """Test sync_table_incremental converts array columns to JSON format"""
+        mock_get_bookmark.side_effect = lambda state, stream_id, key: {
+            "version": 1234567890,
+            "replication_key_value": "100",
+        }.get(key)
+
+        desired_columns = ["id", "_text", "name", "_int"]
+        md_map_with_arrays = {
+            (): {"schema-name": "test_schema", "replication-key": "id"},
+            ("properties", "id"): {"sql-datatype": "integer"},
+            ("properties", "_text"): {"sql-datatype": "text[]"},
+            ("properties", "name"): {"sql-datatype": "varchar"},
+            ("properties", "_int"): {"sql-datatype": "integer[]"},
+        }
+
+        mock_replication_key_result = MagicMock()
+        mock_replication_key_result.__getitem__.return_value = "200"
+
+        mock_conn, mock_cursor = self._setup_mock_connection(
+            export_result=self._create_mock_export_result(rows=25, bytes_uploaded=1250),
+            replication_key_result=mock_replication_key_result,
+        )
+        mock_open_conn.return_value.__enter__.return_value = mock_conn
+
+        self.fast_sync_rds_strategy.sync_table_incremental(
+            stream=self.stream,
+            state=self.state,
+            desired_columns=desired_columns,
+            md_map=md_map_with_arrays,
+            replication_key="id",
+            replication_key_value="100",
+        )
+
+        # Verify export query contains array_to_json for array columns
+        export_query = self._extract_export_query(mock_cursor)
+        self.assertIsNotNone(export_query)
+
+        # Array columns should use array_to_json
+        self.assertIn("array_to_json", export_query)
+        self.assertIn("_text", export_query)
+        self.assertIn("_int", export_query)
+
+        # Verify array columns are wrapped correctly (with flexible whitespace)
+        self.assertRegex(
+            export_query,
+            r'array_to_json\s*\(\s*["\s]*_text["\s]*\)',
+            "Array column '_text' should be wrapped with array_to_json",
+        )
+        self.assertRegex(
+            export_query,
+            r'array_to_json\s*\(\s*["\s]*_int["\s]*\)',
+            "Array column '_int' should be wrapped with array_to_json",
+        )
+
+        # Non-array columns should not be wrapped
+        self.assertIn('"id"', export_query)
+        self.assertIn('"name"', export_query)
+        # Verify they are not wrapped with array_to_json
+        self.assertNotRegex(
+            export_query,
+            r'array_to_json\s*\(\s*["\s]*id["\s]*\)',
+            "Non-array column 'id' should not use array_to_json",
+        )
+        self.assertNotRegex(
+            export_query,
+            r'array_to_json\s*\(\s*["\s]*name["\s]*\)',
+            "Non-array column 'name' should not use array_to_json",
         )

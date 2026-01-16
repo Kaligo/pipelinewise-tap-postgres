@@ -612,6 +612,9 @@ def main_impl():
         "fast_sync_rds_s3_bucket": args.config.get("fast_sync_rds_s3_bucket"),
         "fast_sync_rds_s3_prefix": args.config.get("fast_sync_rds_s3_prefix", ""),
         "fast_sync_rds_s3_region": args.config.get("fast_sync_rds_s3_region"),
+        "fast_sync_rds_transformations": args.config.get(
+            "fast_sync_rds_transformations", {}
+        ),
     }
 
     if conn_config["use_secondary"]:

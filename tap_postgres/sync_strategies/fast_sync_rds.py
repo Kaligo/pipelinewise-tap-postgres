@@ -123,7 +123,10 @@ class FastSyncRdsStrategy:
         return f"array_to_json({column_identifier}) AS {column_identifier}"
 
     def _build_sorted_column_expressions(
-        self, desired_columns: List[str], md_map: Dict
+        self,
+        desired_columns: List[str],
+        md_map: Dict,
+        tap_stream_id: Optional[str] = None,
     ) -> List[str]:
         """
         Build SQL expressions for all columns (metadata + desired) in sorted order.
@@ -135,9 +138,13 @@ class FastSyncRdsStrategy:
         Array columns are automatically converted from PostgreSQL array format
         (e.g., {fashion}) to JSON format (e.g., ["fashion"]) using array_to_json().
 
+        If transformations are configured for the stream, they will be applied
+        to the specified columns instead of the default column expressions.
+
         Args:
             desired_columns: List of desired column names from the source table
             md_map: Metadata map for column transformations
+            tap_stream_id: Optional stream ID to look up transformations
 
         Returns:
             List of SQL expressions for columns in sorted order
@@ -147,10 +154,24 @@ class FastSyncRdsStrategy:
         # Sort columns to ensure the output CSV headers match target's schema order.
         all_column_names.sort()
 
+        # Get transformations for this stream if available
+        transformations = {}
+        if tap_stream_id:
+            all_transformations = self.conn_config.get(
+                "fast_sync_rds_transformations", {}
+            )
+            transformations = all_transformations.get(tap_stream_id, {})
+
         column_expressions = []
         for name in all_column_names:
             if name in metadata_column_names:
                 column_expressions.append(self._get_metadata_column_sql(name))
+            elif name in transformations:
+                transformation_sql = transformations[name]
+                column_identifier = post_db.prepare_columns_sql(name)
+                column_expressions.append(
+                    f"({transformation_sql}) AS {column_identifier}"
+                )
             elif self._is_array_column(name, md_map):
                 column_expressions.append(self._convert_array_column_to_json(name))
             else:
@@ -169,8 +190,11 @@ class FastSyncRdsStrategy:
         replication_key: Optional[str] = None,
         replication_key_value: Optional[str] = None,
         replication_key_sql_datatype: Optional[str] = None,
+        tap_stream_id: Optional[str] = None,
     ) -> str:
-        columns = self._build_sorted_column_expressions(desired_columns, md_map)
+        columns = self._build_sorted_column_expressions(
+            desired_columns, md_map, tap_stream_id
+        )
 
         return sync_common.get_query_for_replication_data(
             {
@@ -413,6 +437,7 @@ class FastSyncRdsStrategy:
             replication_key=replication_key,
             replication_key_value=replication_key_value,
             replication_key_sql_datatype=replication_key_sql_datatype,
+            tap_stream_id=stream["tap_stream_id"],
         )
 
         s3_path = self._generate_s3_path(schema_name, table_name)

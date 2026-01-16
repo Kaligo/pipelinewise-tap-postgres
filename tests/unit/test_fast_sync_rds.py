@@ -670,3 +670,279 @@ class TestFastSyncRds(TestCase):
             r'array_to_json\s*\(\s*["\s]*name["\s]*\)',
             "Non-array column 'name' should not use array_to_json",
         )
+
+    @patch("tap_postgres.sync_strategies.fast_sync_rds.post_db.open_connection")
+    def test_sync_table_full_with_transformations(self, mock_open_conn):
+        """Test sync_table_full applies transformations when configured"""
+        # Configure transformations for the stream
+        conn_config_with_transforms = self.conn_config.copy()
+        conn_config_with_transforms["fast_sync_rds_transformations"] = {
+            "test_schema-test_table": {
+                "name": "UPPER(name)",
+                "id": "id * 2",
+            }
+        }
+        strategy = fast_sync_rds.FastSyncRdsStrategy(
+            conn_config_with_transforms, self.s3_bucket, self.s3_prefix, self.s3_region
+        )
+
+        mock_conn, mock_cursor = self._setup_mock_connection()
+        mock_open_conn.return_value.__enter__.return_value = mock_conn
+
+        strategy.sync_table_full(
+            stream=self.stream,
+            state=self.state,
+            desired_columns=self.desired_columns,
+            md_map=self.md_map,
+        )
+
+        # Verify transformation SQL is in the export query
+        export_query = self._extract_export_query(mock_cursor)
+        self.assertIsNotNone(export_query)
+        self.assertIn("UPPER(name)", export_query)
+        self.assertIn("id * 2", export_query)
+        # Verify the transformations are wrapped with column aliases
+        self.assertIn('(UPPER(name)) AS  "name"', export_query)
+        self.assertIn('(id * 2) AS  "id"', export_query)
+
+    @patch("tap_postgres.sync_strategies.fast_sync_rds.post_db.open_connection")
+    def test_sync_table_full_without_transformations(self, mock_open_conn):
+        """Test sync_table_full does not apply transformations when not configured"""
+        mock_conn, mock_cursor = self._setup_mock_connection()
+        mock_open_conn.return_value.__enter__.return_value = mock_conn
+
+        self.fast_sync_rds_strategy.sync_table_full(
+            stream=self.stream,
+            state=self.state,
+            desired_columns=self.desired_columns,
+            md_map=self.md_map,
+        )
+
+        # Verify normal column references are used (not transformations)
+        export_query = self._extract_export_query(mock_cursor)
+        self.assertIsNotNone(export_query)
+        # Should use normal column references, not transformation expressions
+        self.assertIn('"id"', export_query)
+        self.assertIn('"name"', export_query)
+        # Should not have transformation-like patterns
+        self.assertNotIn("UPPER", export_query)
+        self.assertNotIn(" * 2", export_query)
+
+    @patch("tap_postgres.sync_strategies.fast_sync_rds.post_db.open_connection")
+    def test_sync_table_full_transformations_different_stream(self, mock_open_conn):
+        """Test transformations are only applied to the configured stream"""
+        # Configure transformations for a different stream
+        conn_config_with_transforms = self.conn_config.copy()
+        conn_config_with_transforms["fast_sync_rds_transformations"] = {
+            "other_schema-other_table": {
+                "name": "UPPER(name)",
+            }
+        }
+        strategy = fast_sync_rds.FastSyncRdsStrategy(
+            conn_config_with_transforms, self.s3_bucket, self.s3_prefix, self.s3_region
+        )
+
+        mock_conn, mock_cursor = self._setup_mock_connection()
+        mock_open_conn.return_value.__enter__.return_value = mock_conn
+
+        strategy.sync_table_full(
+            stream=self.stream,
+            state=self.state,
+            desired_columns=self.desired_columns,
+            md_map=self.md_map,
+        )
+
+        # Verify transformation is NOT applied (different stream)
+        export_query = self._extract_export_query(mock_cursor)
+        self.assertIsNotNone(export_query)
+        self.assertNotIn("UPPER(name)", export_query)
+        # Should use normal column references
+        self.assertIn('"name"', export_query)
+
+    @patch("tap_postgres.sync_strategies.fast_sync_rds.post_db.open_connection")
+    @patch("tap_postgres.sync_strategies.fast_sync_rds.singer.get_bookmark")
+    def test_sync_table_incremental_with_transformations(
+        self, mock_get_bookmark, mock_open_conn
+    ):
+        """Test sync_table_incremental applies transformations when configured"""
+        mock_get_bookmark.side_effect = lambda state, stream_id, key: {
+            "version": 1234567890,
+            "replication_key_value": "100",
+        }.get(key)
+
+        # Configure transformations
+        conn_config_with_transforms = self.conn_config.copy()
+        conn_config_with_transforms["fast_sync_rds_transformations"] = {
+            "test_schema-test_table": {
+                "name": "LOWER(name)",
+            }
+        }
+        strategy = fast_sync_rds.FastSyncRdsStrategy(
+            conn_config_with_transforms, self.s3_bucket, self.s3_prefix, self.s3_region
+        )
+
+        md_map_with_key = self.md_map.copy()
+        md_map_with_key[()]["replication-key"] = "id"
+        md_map_with_key[("properties", "id")] = {"sql-datatype": "integer"}
+
+        mock_replication_key_result = MagicMock()
+        mock_replication_key_result.__getitem__.return_value = "200"
+
+        mock_conn, mock_cursor = self._setup_mock_connection(
+            export_result=self._create_mock_export_result(rows=25, bytes_uploaded=1250),
+            replication_key_result=mock_replication_key_result,
+        )
+        mock_open_conn.return_value.__enter__.return_value = mock_conn
+
+        strategy.sync_table_incremental(
+            stream=self.stream,
+            state=self.state,
+            desired_columns=self.desired_columns,
+            md_map=md_map_with_key,
+            replication_key="id",
+            replication_key_value="100",
+        )
+
+        # Verify transformation SQL is in the export query
+        export_query = self._extract_export_query(mock_cursor)
+        self.assertIsNotNone(export_query)
+        self.assertIn("LOWER(name)", export_query)
+        self.assertIn('(LOWER(name)) AS  "name"', export_query)
+
+    @patch("tap_postgres.sync_strategies.fast_sync_rds.post_db.open_connection")
+    def test_sync_table_full_transformations_with_array_columns(self, mock_open_conn):
+        """Test transformations work correctly with array columns"""
+        # Configure transformations for a non-array column
+        conn_config_with_transforms = self.conn_config.copy()
+        conn_config_with_transforms["fast_sync_rds_transformations"] = {
+            "test_schema-test_table": {
+                "name": "UPPER(name)",
+            }
+        }
+        strategy = fast_sync_rds.FastSyncRdsStrategy(
+            conn_config_with_transforms, self.s3_bucket, self.s3_prefix, self.s3_region
+        )
+
+        desired_columns = ["id", "name", "_text"]
+        md_map_with_arrays = {
+            (): {"schema-name": "test_schema"},
+            ("properties", "id"): {"sql-datatype": "integer"},
+            ("properties", "name"): {"sql-datatype": "varchar"},
+            ("properties", "_text"): {"sql-datatype": "text[]"},
+        }
+
+        mock_conn, mock_cursor = self._setup_mock_connection()
+        mock_open_conn.return_value.__enter__.return_value = mock_conn
+
+        strategy.sync_table_full(
+            stream=self.stream,
+            state=self.state,
+            desired_columns=desired_columns,
+            md_map=md_map_with_arrays,
+        )
+
+        # Verify transformation is applied to non-array column
+        export_query = self._extract_export_query(mock_cursor)
+        self.assertIsNotNone(export_query)
+        self.assertIn("UPPER(name)", export_query)
+        self.assertIn('(UPPER(name)) AS  "name"', export_query)
+
+        # Verify array column still uses array_to_json (not transformation)
+        self.assertIn("array_to_json", export_query)
+        self.assertIn("_text", export_query)
+        self.assertRegex(
+            export_query,
+            r'array_to_json\s*\(\s*["\s]*_text["\s]*\)',
+            "Array column '_text' should use array_to_json, not transformation",
+        )
+
+    @patch("tap_postgres.sync_strategies.fast_sync_rds.post_db.open_connection")
+    def test_sync_table_full_transformations_with_metadata_columns(
+        self, mock_open_conn
+    ):
+        """Test transformations work correctly with metadata columns present"""
+        # Configure transformations
+        conn_config_with_transforms = self.conn_config.copy()
+        conn_config_with_transforms["fast_sync_rds_transformations"] = {
+            "test_schema-test_table": {
+                "name": "COALESCE(name, 'N/A')",
+            }
+        }
+        strategy = fast_sync_rds.FastSyncRdsStrategy(
+            conn_config_with_transforms, self.s3_bucket, self.s3_prefix, self.s3_region
+        )
+
+        mock_conn, mock_cursor = self._setup_mock_connection()
+        mock_open_conn.return_value.__enter__.return_value = mock_conn
+
+        strategy.sync_table_full(
+            stream=self.stream,
+            state=self.state,
+            desired_columns=self.desired_columns,
+            md_map=self.md_map,
+        )
+
+        # Verify transformation is applied
+        export_query = self._extract_export_query(mock_cursor)
+        self.assertIsNotNone(export_query)
+        # SQL escaping converts single quotes to double single quotes
+        self.assertIn("COALESCE(name, ''N/A'')", export_query)
+        self.assertRegex(
+            export_query,
+            r'\(COALESCE\(name,\s+\'\'N/A\'\'\)\)\s+AS\s+"name"',
+            "Transformation for 'name' should be wrapped with alias",
+        )
+
+        # Verify metadata columns are still present and not transformed
+        self.assertIn("_sdc_batched_at", export_query)
+        self.assertIn("_sdc_deleted_at", export_query)
+        self.assertIn("_sdc_extracted_at", export_query)
+        # Metadata columns should use their standard SQL, not transformations
+        # SQL escaping converts single quotes to double single quotes
+        self.assertIn(
+            "current_timestamp at time zone ''UTC'' as _sdc_batched_at", export_query
+        )
+
+    @patch("tap_postgres.sync_strategies.fast_sync_rds.post_db.open_connection")
+    def test_sync_table_full_transformations_partial_columns(self, mock_open_conn):
+        """Test transformations can be applied to only some columns"""
+        # Configure transformation for only one column
+        conn_config_with_transforms = self.conn_config.copy()
+        conn_config_with_transforms["fast_sync_rds_transformations"] = {
+            "test_schema-test_table": {
+                "name": "UPPER(name)",
+                # No transformation for "id"
+            }
+        }
+        strategy = fast_sync_rds.FastSyncRdsStrategy(
+            conn_config_with_transforms, self.s3_bucket, self.s3_prefix, self.s3_region
+        )
+
+        mock_conn, mock_cursor = self._setup_mock_connection()
+        mock_open_conn.return_value.__enter__.return_value = mock_conn
+
+        strategy.sync_table_full(
+            stream=self.stream,
+            state=self.state,
+            desired_columns=self.desired_columns,
+            md_map=self.md_map,
+        )
+
+        # Verify transformation is applied to "name"
+        export_query = self._extract_export_query(mock_cursor)
+        self.assertIsNotNone(export_query)
+        self.assertIn("UPPER(name)", export_query)
+        self.assertRegex(
+            export_query,
+            r'\(UPPER\(name\)\)\s+AS\s+"name"',
+            "Transformation for 'name' should be wrapped with alias",
+        )
+
+        # Verify "id" uses normal column reference (no transformation)
+        self.assertIn('"id"', export_query)
+        # Should not have transformation for id
+        self.assertNotRegex(
+            export_query,
+            r'\(.*\)\s+AS\s+"id"',
+            "Column 'id' should not have transformation",
+        )

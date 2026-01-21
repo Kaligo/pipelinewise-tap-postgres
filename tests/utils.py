@@ -131,6 +131,13 @@ def ensure_test_table(table_spec, target_db='postgres'):
             sql = build_table(table_spec, cur)
             LOGGER.info("create table sql: %s", sql)
             cur.execute(sql)
+    
+def add_columns(table_spec, target_db='postgres'):
+    with get_test_connection(target_db) as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            table = quote_ident(table_spec['name'], cur)
+            for col_spec in table_spec['columns']:
+                cur.execute("ALTER TABLE {} ADD {} {}".format(table, col_spec['name'], col_spec['type']))
 
 def unselect_column(our_stream, col):
     md = metadata.to_map(our_stream['metadata'])

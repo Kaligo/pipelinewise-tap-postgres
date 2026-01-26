@@ -612,6 +612,10 @@ def main_impl():
         "fast_sync_rds_s3_bucket": args.config.get("fast_sync_rds_s3_bucket"),
         "fast_sync_rds_s3_prefix": args.config.get("fast_sync_rds_s3_prefix", ""),
         "fast_sync_rds_s3_region": args.config.get("fast_sync_rds_s3_region"),
+        "convert_to_parquet": args.config.get("convert_to_parquet", False),
+        "direct_query_to_parquet": args.config.get("direct_query_to_parquet", False),
+        "use_connectorx": args.config.get("use_connectorx", False),
+        "use_connectorx_no_batch": args.config.get("use_connectorx_no_batch", False),
     }
 
     if conn_config["use_secondary"]:

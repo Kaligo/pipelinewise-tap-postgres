@@ -20,7 +20,10 @@ setup(
     python_requires=">=3.7,<3.14",
     install_requires=[
         "pipelinewise-singer-python==1.*",
-        "psycopg2-binary==2.9.11",
+        "psycopg2-binary==2.9.10",
+        "pyarrow>=22.0.0",
+        "boto3==1.26.*",
+        "connectorx>=0.4.4",
         "strict-rfc3339==0.7",
     ],
     extras_require={"test": ["pytest==7.2.2", "pylint>=2.17.0", "pytest-cov==4.0.0"]},

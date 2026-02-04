@@ -163,10 +163,10 @@ class FastSyncRdsStrategy:
             transformations = all_transformations.get(tap_stream_id, {})
 
         column_expressions = []
-        for col, transformation in transformations.items():
+        for col, col_expr in transformations.items():
             column_identifier = post_db.prepare_columns_sql(col)
             column_expressions.append(
-                f"({transformation}) AS {column_identifier}"
+                f"({col_expr}) AS {column_identifier}"
             )
 
         for name in all_column_names:

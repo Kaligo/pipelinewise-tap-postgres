@@ -19,12 +19,15 @@ def write_message(message):
     sys.stdout.flush()
 
 
-def send_schema_message(stream, bookmark_properties):
+# extra_properties is a collection of col schemas that are created on the fly (not in orginal catalog)
+def send_schema_message(stream, bookmark_properties, extra_properties={}):
     s_md = metadata.to_map(stream["metadata"])
     if s_md.get((), {}).get("is-view"):
         key_properties = s_md.get((), {}).get("view-key-properties", [])
     else:
         key_properties = s_md.get((), {}).get("table-key-properties", [])
+
+    stream["schema"]["properties"].update(extra_properties)
 
     schema_message = {
         "type": "SCHEMA",

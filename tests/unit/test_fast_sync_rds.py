@@ -680,6 +680,7 @@ class TestFastSyncRds(TestCase):
             "test_schema-test_table": {
                 "name": "UPPER(name)",
                 "id": "id * 2",
+                "new_name": "MD5(name:text || id::text)",
             }
         }
         strategy = fast_sync_rds.FastSyncRdsStrategy(
@@ -701,9 +702,11 @@ class TestFastSyncRds(TestCase):
         self.assertIsNotNone(export_query)
         self.assertIn("UPPER(name)", export_query)
         self.assertIn("id * 2", export_query)
+        self.assertIn("MD5(name:text || id::text)", export_query)
         # Verify the transformations are wrapped with column aliases
         self.assertIn('(UPPER(name)) AS  "name"', export_query)
         self.assertIn('(id * 2) AS  "id"', export_query)
+        self.assertIn('(MD5(name:text || id::text)) AS  "new_name"', export_query)
 
     @patch("tap_postgres.sync_strategies.fast_sync_rds.post_db.open_connection")
     def test_sync_table_full_without_transformations(self, mock_open_conn):
@@ -775,6 +778,7 @@ class TestFastSyncRds(TestCase):
         conn_config_with_transforms["fast_sync_rds_transformations"] = {
             "test_schema-test_table": {
                 "name": "LOWER(name)",
+                "new_name": "MD5(name:text)",
             }
         }
         strategy = fast_sync_rds.FastSyncRdsStrategy(
@@ -807,7 +811,9 @@ class TestFastSyncRds(TestCase):
         export_query = self._extract_export_query(mock_cursor)
         self.assertIsNotNone(export_query)
         self.assertIn("LOWER(name)", export_query)
+        self.assertIn("MD5(name:text)", export_query)
         self.assertIn('(LOWER(name)) AS  "name"', export_query)
+        self.assertIn('(MD5(name:text)) AS  "new_name"', export_query)
 
     @patch("tap_postgres.sync_strategies.fast_sync_rds.post_db.open_connection")
     def test_sync_table_full_transformations_with_array_columns(self, mock_open_conn):
@@ -866,6 +872,7 @@ class TestFastSyncRds(TestCase):
         conn_config_with_transforms["fast_sync_rds_transformations"] = {
             "test_schema-test_table": {
                 "name": "COALESCE(name, 'N/A')",
+                "new_name": "UPPER(name)",
             }
         }
         strategy = fast_sync_rds.FastSyncRdsStrategy(
@@ -892,6 +899,8 @@ class TestFastSyncRds(TestCase):
             r'\(COALESCE\(name,\s+\'\'N/A\'\'\)\)\s+AS\s+"name"',
             "Transformation for 'name' should be wrapped with alias",
         )
+        self.assertIn("UPPER(name)", export_query)
+        self.assertIn('(UPPER(name)) AS  "new_name"', export_query)
 
         # Verify metadata columns are still present and not transformed
         self.assertIn("_sdc_batched_at", export_query)

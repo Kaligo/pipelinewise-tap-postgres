@@ -155,27 +155,19 @@ class FastSyncRdsStrategy:
             List of SQL expressions for columns in sorted order
         """
         metadata_column_names = self._get_metadata_column_names()
-        all_column_names = [*metadata_column_names, *desired_columns]
-        # Sort columns to ensure the output CSV headers match target's schema order.
-        all_column_names.sort()
-
-        # Get transformations for this stream if available
-        transformations = {}
-        if tap_stream_id:
-            transformations = self._get_fast_sync_rds_transformation(tap_stream_id)
+        transformations = self._get_fast_sync_rds_transformation(tap_stream_id)
+        all_column_names = list(
+            set([*metadata_column_names, *desired_columns, *transformations.keys()])
+        )
 
         column_expressions = []
-        for col, col_expr in transformations.items():
-            column_identifier = post_db.prepare_columns_sql(col)
-            column_expressions.append(
-                f"({col_expr}) AS {column_identifier}"
-            )
-
         for name in all_column_names:
             if name in transformations:
-                continue
-
-            if name in metadata_column_names:
+                column_identifier = post_db.prepare_columns_sql(name)
+                column_expressions.append(
+                    f"({transformations[name]}) AS {column_identifier}"
+                )
+            elif name in metadata_column_names:
                 column_expressions.append(self._get_metadata_column_sql(name))
             elif self._is_array_column(name, md_map):
                 column_expressions.append(self._convert_array_column_to_json(name))

@@ -156,6 +156,7 @@ class FastSyncRdsStrategy:
         """
         metadata_column_names = self._get_metadata_column_names()
         transformations = self._get_fast_sync_rds_transformation(tap_stream_id)
+        # Set operations are used to avoid duplicates and ensure the order is deterministic for target-redshift.
         all_column_names = list(
             set([*metadata_column_names, *desired_columns, *transformations.keys()])
         )

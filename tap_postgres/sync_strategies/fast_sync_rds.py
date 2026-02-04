@@ -79,9 +79,9 @@ class FastSyncRdsStrategy:
         return []
 
     def _get_fast_sync_rds_transformation(self, tap_stream_id: str) -> Dict[str, str]:
-        return  self.conn_config.get(
-            "fast_sync_rds_transformations", {}
-        ).get(tap_stream_id, {})
+        return self.conn_config.get("fast_sync_rds_transformations", {}).get(
+            tap_stream_id, {}
+        )
 
     def _get_metadata_column_sql(self, column_name: str) -> str:
         """Get SQL expression for a metadata column."""
@@ -157,8 +157,10 @@ class FastSyncRdsStrategy:
         metadata_column_names = self._get_metadata_column_names()
         transformations = self._get_fast_sync_rds_transformation(tap_stream_id)
         # Set operations are used to avoid duplicates and ensure the order is deterministic for target-redshift.
-        all_column_names = list(
-            set([*metadata_column_names, *desired_columns, *transformations.keys()])
+        all_column_names = sorted(
+            list(
+                set([*metadata_column_names, *desired_columns, *transformations.keys()])
+            )
         )
 
         column_expressions = []
@@ -378,7 +380,9 @@ class FastSyncRdsStrategy:
 
         return state
 
-    def get_extra_column_properties(self, desired_columns: List[str], stream: Dict) -> List[str]:
+    def get_extra_column_properties(
+        self, desired_columns: List[str], stream: Dict
+    ) -> List[str]:
         """
         Get extra column properties for fast sync RDS strategy.
         Extra columns are columns that are created on the fly (not in orginal catalog)
@@ -396,7 +400,9 @@ class FastSyncRdsStrategy:
             stream["tap_stream_id"]
         )
         all_columns = [*self._get_metadata_column_names(), *desired_columns]
-        extra_columns = [col for col in transformation_columns if col not in all_columns]
+        extra_columns = [
+            col for col in transformation_columns if col not in all_columns
+        ]
 
         # On-the-fly columns use string type; other types could be added if needed.
         return {col: {"type": ["string", "null"]} for col in extra_columns}

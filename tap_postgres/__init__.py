@@ -151,7 +151,9 @@ def do_fast_sync_rds(conn_config, stream, state, desired_columns, md_map, sync_m
         state, stream["tap_stream_id"], "replication_key", replication_key
     )
     sync_common.send_schema_message(
-        stream, [replication_key] if replication_key else []
+        stream,
+        [replication_key] if replication_key else [],
+        fast_sync_rds_strategy.get_extra_column_properties(desired_columns, stream),
     )
 
     LOGGER.info("Performing %s", sync_method)

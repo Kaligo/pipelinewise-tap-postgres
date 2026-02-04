@@ -163,15 +163,18 @@ class FastSyncRdsStrategy:
             transformations = all_transformations.get(tap_stream_id, {})
 
         column_expressions = []
+        for col, transformation in transformations.items():
+            column_identifier = post_db.prepare_columns_sql(col)
+            column_expressions.append(
+                f"({transformation}) AS {column_identifier}"
+            )
+
         for name in all_column_names:
+            if name in transformations:
+                continue
+
             if name in metadata_column_names:
                 column_expressions.append(self._get_metadata_column_sql(name))
-            elif name in transformations:
-                transformation_sql = transformations[name]
-                column_identifier = post_db.prepare_columns_sql(name)
-                column_expressions.append(
-                    f"({transformation_sql}) AS {column_identifier}"
-                )
             elif self._is_array_column(name, md_map):
                 column_expressions.append(self._convert_array_column_to_json(name))
             else:

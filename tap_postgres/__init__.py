@@ -615,6 +615,16 @@ def main_impl():
         "fast_sync_rds_transformations": args.config.get(
             "fast_sync_rds_transformations", {}
         ),
+        "fast_sync_rds_output_format": args.config.get(
+            "fast_sync_rds_output_format", "csv"
+        ),
+        "fast_sync_rds_add_metadata_columns": args.config.get(
+            "fast_sync_rds_add_metadata_columns", True
+        ),
+        "fast_sync_rds_delete_intermediate_csv": args.config.get(
+            "fast_sync_rds_delete_intermediate_csv", False
+        ),
+        "fast_sync_rds_proxy_options": args.config.get("fast_sync_rds_proxy_options"),
     }
 
     if conn_config["use_secondary"]:

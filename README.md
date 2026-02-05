@@ -74,7 +74,10 @@ Full list of options in `config.json`:
 | fast_sync_rds_s3_bucket    | String  | No       | -       | S3 bucket name for fast sync RDS exports (required if `fast_sync_rds` is `True`)                                                                                                                    |
 | fast_sync_rds_s3_prefix    | String  | No       | ""      | S3 prefix/path for fast sync RDS exports                                                                                                                                                        |
 | fast_sync_rds_s3_region    | String  | No       | -       | AWS region where the S3 bucket is located (required if `fast_sync_rds` is `True`)                                                                                                                    |
+| fast_sync_rds_output_format | String  | No       | "csv"   | Output file format for fast sync RDS exports. Accepted values: `"csv"` or `"parquet"`. When set to `"parquet"`, CSV files are automatically converted to Parquet format after export. Default is `"csv"`. |
+| fast_sync_rds_delete_intermediate_csv | Boolean | No       | False   | Whether to delete intermediate CSV files from S3 after successful Parquet conversion. Only applies when `fast_sync_rds_output_format` is set to `"parquet"`. |
 | fast_sync_rds_add_metadata_columns | Boolean | No       | True    | Whether to add metadata columns (`_SDC_BATCHED_AT`, `_SDC_DELETED_AT`, `_SDC_EXTRACTED_AT`) to the exported data. Set to `False` to exclude these columns. **Note:** This setting must be synced with the `add_metadata_columns` setting in `pipelinewise-target-redshift` to ensure consistent schema between tap and target. |
+| fast_sync_rds_proxy_options | Object  | No       | None    | Proxy configuration for S3 access when converting CSV to Parquet. Only applies when `fast_sync_rds_output_format` is set to `"parquet"`. Object with keys: `scheme` (e.g., "http", "https"), `host` (proxy hostname), and `port` (proxy port number). If not provided, S3 access will not use a proxy. |
 
 
 ### Run the tap in Discovery Mode
@@ -141,7 +144,14 @@ To enable fast sync RDS, add the following configuration to your `config.json`:
   "fast_sync_rds_s3_bucket": "your-s3-bucket-name",
   "fast_sync_rds_s3_prefix": "postgres/exports",
   "fast_sync_rds_s3_region": "us-east-1",
-  "fast_sync_rds_add_metadata_columns": true
+  "fast_sync_rds_output_format": "csv",
+  "fast_sync_rds_delete_intermediate_csv": false,
+  "fast_sync_rds_add_metadata_columns": true,
+  "fast_sync_rds_proxy_options": {
+    "scheme": "http",
+    "host": "proxy.example.com",
+    "port": 3128
+  }
 }
 ```
 

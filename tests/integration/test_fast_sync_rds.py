@@ -30,7 +30,10 @@ tap_postgres.dump_catalog = do_not_dump_catalog
 @contextlib.contextmanager
 def mock_export_to_s3(mock_result):
     """
-    Context manager that mocks _export_to_s3 and captures stdout.
+    Context manager that mocks the database cursor to simulate aws_s3.query_export_to_s3 results.
+    This mocks at the database connection level (external service) rather than internal methods.
+    The mock is selective - it only mocks queries containing 'aws_s3.query_export_to_s3',
+    allowing other database operations to use real connections.
 
     Args:
         mock_result: Dictionary with 'rows_uploaded', 'files_uploaded', 'bytes_uploaded'
@@ -40,9 +43,114 @@ def mock_export_to_s3(mock_result):
     """
     my_stdout = io.StringIO()
     with contextlib.redirect_stdout(my_stdout):
+        import tap_postgres.db as post_db
+
+        original_open_connection = post_db.open_connection
+
+        # Create a mock result that behaves like a DictCursor row
+        class MockDictCursorResult:
+            """Mock result that behaves like a DictCursor row"""
+
+            def __init__(self, data):
+                self._data = data
+
+            def __getitem__(self, key):
+                # Support both string keys (dict access) and integer indices (tuple access)
+                if isinstance(key, int):
+                    # For integer indices, return values in order
+                    values = list(self._data.values())
+                    if 0 <= key < len(values):
+                        return values[key]
+                    raise IndexError(f"Index {key} out of range")
+                return self._data[key]
+
+            def __contains__(self, key):
+                return key in self._data
+
+        class SelectiveMockCursor:
+            """Mock cursor that only mocks aws_s3.query_export_to_s3 queries"""
+
+            def __init__(self, real_conn, mock_result, cursor_factory=None):
+                self.real_conn = real_conn
+                self.mock_result = mock_result
+                self.executed_query = None
+                self.cursor_factory = cursor_factory
+                self._real_cursor = None
+                self._is_export_query = False
+
+            def _get_real_cursor(self):
+                """Get real cursor from real connection"""
+                if self._real_cursor is None:
+                    if self.cursor_factory:
+                        self._real_cursor = self.real_conn.cursor(
+                            cursor_factory=self.cursor_factory
+                        )
+                    else:
+                        self._real_cursor = self.real_conn.cursor()
+                return self._real_cursor
+
+            def execute(self, query, *args, **kwargs):
+                self.executed_query = query
+                self._is_export_query = "aws_s3.query_export_to_s3" in query
+                # For non-export queries, execute on real connection
+                if not self._is_export_query:
+                    real_cursor = self._get_real_cursor()
+                    real_cursor.execute(query, *args, **kwargs)
+
+            def fetchone(self):
+                # Only return mock result for aws_s3.query_export_to_s3 queries
+                if self._is_export_query:
+                    return MockDictCursorResult(self.mock_result)
+                # For other queries, use real cursor
+                real_cursor = self._get_real_cursor()
+                return real_cursor.fetchone()
+
+            def __getattr__(self, name):
+                # Delegate all other methods/attributes to real cursor
+                real_cursor = self._get_real_cursor()
+                return getattr(real_cursor, name)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args, **kwargs):
+                if self._real_cursor:
+                    return self._real_cursor.__exit__(*args, **kwargs)
+                return None
+
+        def selective_mock_open_connection(conn_config, *args, **kwargs):
+            """Open real connection but wrap cursor for selective mocking"""
+            real_conn = original_open_connection(conn_config, *args, **kwargs)
+
+            # Create a wrapper that intercepts cursor() calls
+            class ConnectionWrapper:
+                def __init__(self, real_conn, mock_result):
+                    self.real_conn = real_conn
+                    self.mock_result = mock_result
+
+                def cursor(self, cursor_factory=None, *args, **kwargs):
+                    # Return selective mock cursor that delegates to real for non-export queries
+                    return SelectiveMockCursor(
+                        self.real_conn, self.mock_result, cursor_factory
+                    )
+
+                def __getattr__(self, name):
+                    # Delegate all other attributes to real connection
+                    return getattr(self.real_conn, name)
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *args, **kwargs):
+                    return self.real_conn.__exit__(*args, **kwargs)
+
+            return ConnectionWrapper(real_conn, mock_result)
+
+        # Mock post_db.open_connection only within the fast_sync_rds module
+        # This mocks the external database service, not internal methods
         with unittest.mock.patch(
-            "tap_postgres.sync_strategies.fast_sync_rds.FastSyncRdsStrategy._export_to_s3",
-            return_value=mock_result,
+            "tap_postgres.sync_strategies.fast_sync_rds.post_db.open_connection",
+            side_effect=selective_mock_open_connection,
         ):
             yield my_stdout
 
@@ -281,7 +389,7 @@ class TestFastSyncRds(unittest.TestCase):
         state_with_s3_info = self._find_state_with_s3_info(output, stream_id)
         self.assertIsNone(
             state_with_s3_info,
-            "fast_sync_s3_info should not be stored when rows_uploaded is 0"
+            "fast_sync_s3_info should not be stored when rows_uploaded is 0",
         )
 
         # Verify STATE message still exists with version (sync still occurred)
@@ -379,10 +487,8 @@ class TestFastSyncRds(unittest.TestCase):
                 "bytes_uploaded": 512,
             }
 
-            with unittest.mock.patch(
-                "tap_postgres.sync_strategies.fast_sync_rds.FastSyncRdsStrategy._export_to_s3",
-                return_value=mock_result,
-            ):
+            # Mock at database connection level instead of private method
+            with mock_export_to_s3(mock_result):
                 result_state = strategy.sync_table_incremental(
                     test_stream,
                     state,
@@ -421,10 +527,22 @@ class TestFastSyncRds(unittest.TestCase):
         desired_columns = ["id", "name", "value", "updated_at"]
         state = {}
 
-        # Mock _export_to_s3 to raise an exception
+        # Mock database cursor to raise an exception (simulating export failure)
+        # This mocks at the database connection level within fast_sync_rds module, not internal methods
+        mock_cursor = unittest.mock.MagicMock()
+        mock_cursor.fetchone.return_value = None  # Simulate no result returned
+        mock_cursor.__enter__ = unittest.mock.Mock(return_value=mock_cursor)
+        mock_cursor.__exit__ = unittest.mock.Mock(return_value=None)
+
+        mock_conn = unittest.mock.MagicMock()
+        mock_conn.cursor.return_value = mock_cursor
+        mock_conn.__enter__ = unittest.mock.Mock(return_value=mock_conn)
+        mock_conn.__exit__ = unittest.mock.Mock(return_value=None)
+
+        # Mock at the fast_sync_rds module level to only affect that module's database calls
         with unittest.mock.patch(
-            "tap_postgres.sync_strategies.fast_sync_rds.FastSyncRdsStrategy._export_to_s3",
-            side_effect=Exception("Export to S3 failed: No result returned"),
+            "tap_postgres.sync_strategies.fast_sync_rds.post_db.open_connection",
+            return_value=mock_conn,
         ):
             with self.assertRaises(Exception) as context:
                 strategy.sync_table_full(test_stream, state, desired_columns, md_map)
